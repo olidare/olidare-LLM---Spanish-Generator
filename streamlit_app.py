@@ -1,3 +1,8 @@
+yes can you provide a fully updated version with these fixes:
+
+here's the existing code:
+
+
 import streamlit as st
 import pandas as pd
 import requests
