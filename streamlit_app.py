@@ -240,40 +240,61 @@ def main():
     secrets = get_secrets()
     
     # Sidebar for configuration
+
     with st.sidebar:
-        st.header("Configuration")
-        
-        # Allow manual override of secrets
-        notion_token = st.text_input("Notion Token", 
-                                  value=secrets["NOTION_TOKEN"] or "", 
-                                  type="password")
-        database_id = st.text_input("Database ID", 
-                                   value=secrets["DATABASE_ID"] or "")
-        hf_token = st.text_input("HuggingFace Token", 
-                                value=secrets["HF_TOKEN"] or "", 
-                                type="password")
-        
-        if st.button("Test Connections"):
-            col1, col2 = st.columns(2)
-            with col1:
-                if notion_token and database_id:
-                    try:
-                        existing_words = get_existing_words(notion_token, database_id)
-                        st.success(f"✅ Notion: {len(existing_words)} words")
-                    except Exception as e:
-                        st.error(f"❌ Notion: {str(e)}")
-                else:
-                    st.warning("Notion credentials missing")
-            
-            with col2:
-                if hf_token:
-                    st.info("HF check would run here")
-                    st.success("✅ HF Connected")
-                else:
-                    st.warning("HF token missing")
+    st.header("Configuration")
     
-    # Main content
-    tab1, tab2 = st.tabs(["From Article URL", "Manual Entry"])
+    # Get secrets (will be empty dict if no secrets.toml)
+    secrets = get_secrets()  # Your existing function
+    
+    # --- Token Input Fields with Security ---
+    # Notion Token
+    if not secrets.get("NOTION_TOKEN"):
+        notion_token = st.text_input("Notion Token", type="password")
+        st.warning("Using temporary token - add to secrets.toml for persistence")
+    else:
+        notion_token = secrets["NOTION_TOKEN"]
+        if st.toggle("Show Notion Token"):
+            st.text_input("Notion Token", value=notion_token, disabled=True)
+        else:
+            st.success("✅ Notion Token loaded (hidden)")
+    
+    # Database ID (less sensitive but still should be protected)
+    if not secrets.get("DATABASE_ID"):
+        database_id = st.text_input("Database ID")
+    else:
+        database_id = secrets["DATABASE_ID"]
+        st.text_input("Database ID", value="************", disabled=True)
+    
+    # HuggingFace Token
+    if not secrets.get("HF_TOKEN"):
+        hf_token = st.text_input("HuggingFace Token", type="password")
+    else:
+        hf_token = secrets["HF_TOKEN"]
+        st.success("✅ HF Token loaded (hidden)")
+    
+    # --- Test Connections Button (unchanged) ---
+    if st.button("Test Connections"):
+        col1, col2 = st.columns(2)
+        with col1:
+            if notion_token and database_id:
+                try:
+                    existing_words = get_existing_words(notion_token, database_id)
+                    st.success(f"✅ Notion: {len(existing_words)} words")
+                except Exception as e:
+                    st.error(f"❌ Notion: {str(e)}")
+            else:
+                st.warning("Notion credentials missing")
+        
+        with col2:
+            if hf_token:
+                st.info("HF check would run here")
+                st.success("✅ HF Connected")
+            else:
+                st.warning("HF token missing")
+
+# Rest of your code remains unchanged
+tab1, tab2 = st.tabs(["From Article URL", "Manual Entry"])
     
     with tab1:
         st.header("Extract Vocabulary from Article")
