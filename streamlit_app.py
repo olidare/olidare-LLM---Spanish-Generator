@@ -1,8 +1,3 @@
-yes can you provide a fully updated version with these fixes:
-
-here's the existing code:
-
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -17,6 +12,7 @@ import os
 
 # --- Constants ---
 DEFAULT_FIELDS = ["Spanish", "English", "Date Added", "Reveal Answer", "Status", "Correct Answer"]
+HF_MODEL = "Helsinki-NLP/opus-mt-es-en"  # More reliable translation model
 
 # --- Secrets Configuration ---
 def get_secrets():
@@ -143,96 +139,44 @@ async def fetch_article_text(url: str) -> str:
         return ""
 
 # --- HuggingFace LLM Interface ---
-async def extract_vocabulary_with_hf(text: str, difficulty: str, hf_token: str) -> List[Dict]:
+async def extract_vocabulary_with_hf(text: str, hf_token: str) -> List[Dict]:
     """
-    Extract vocabulary from text using HuggingFace Inference API.
+    Extract vocabulary using HuggingFace translation API
+    More reliable than the instruction-based approach
     """
     try:
-        # Truncate text if too long (HF API has limits)
-        text = text[:2000]  # Limit to first 2000 chars
+        API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
+        headers = {"Authorization": f"Bearer {hf_token}"}
         
-        # Prepare the prompt for vocabulary extraction
-        prompt = f"""
-        Extract {difficulty.lower()} Spanish vocabulary words and phrases from this text.
-        For each item, provide the Spanish term and its English translation.
-        Return only JSON format like this: [{{"Spanish": "palabra", "English": "word"}}]
+        # First extract Spanish words (5+ letters)
+        spanish_words = list(set(re.findall(r'\b[a-zA-ZáéíóúñÁÉÍÓÚÑ]{5,}\b', text[:2000])))
         
-        Text: {text}
-        """
-        
-        # Call HuggingFace Inference API
+        # Get English translations
+        translations = []
         async with httpx.AsyncClient() as client:
-            headers = {
-                "Authorization": f"Bearer {hf_token}",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "inputs": prompt,
-                "parameters": {
-                    "max_length": 500,
-                    "return_full_text": False
-                }
-            }
-            
-            response = await client.post(
-                "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.1",
-                headers=headers,
-                json=payload,
-                timeout=30.0
-            )
-            
-            if response.status_code != 200:
-                st.error(f"HF API Error: {response.text}")
-                return []
-            
-            try:
-                result = response.json()
-                if isinstance(result, list):
-                    return result
-                elif isinstance(result, dict):
-                    generated_text = result.get("generated_text", "")
-                    json_start = generated_text.find('[')
-                    json_end = generated_text.rfind(']') + 1
-                    if json_start != -1 and json_end != -1:
-                        json_str = generated_text[json_start:json_end]
-                        return json.loads(json_str)
-            except json.JSONDecodeError:
-                st.error("Could not parse LLM response as JSON")
-                return []
-            
-        return []
-    except Exception as e:
-        st.error(f"Error with HF API: {str(e)}")
-        return []
-
-# --- Async Wrapper for Streamlit ---
-async def process_article(article_url: str, difficulty: str, hf_token: str):
-    """Async function to process article and extract vocabulary"""
-    with st.spinner("Processing article..."):
-        # Fetch article text
-        article_text = await fetch_article_text(article_url)
+            for word in spanish_words[:20]:  # Limit to 20 words
+                response = await client.post(
+                    API_URL,
+                    headers=headers,
+                    json={"inputs": word},
+                    timeout=30.0
+                )
+                
+                if response.status_code == 200:
+                    translations.append({
+                        "Spanish": word,
+                        "English": response.json()[0]['translation_text'],
+                        "Reveal Answer": False,
+                        "Status": "Not started"
+                    })
+                else:
+                    st.warning(f"Couldn't translate '{word}': {response.text}")
         
-        if article_text:
-            st.session_state.article_text = article_text
-            st.text_area("Extracted Article Text", 
-                       value=article_text[:2000] + ("..." if len(article_text) > 2000 else ""), 
-                       height=200)
-            
-            # Extract vocabulary using HF
-            vocabulary = await extract_vocabulary_with_hf(
-                article_text, 
-                difficulty, 
-                hf_token
-            )
-            
-            if vocabulary:
-                st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
-                st.success(f"Found {len(vocabulary)} vocabulary items")
-            else:
-                st.warning("No vocabulary could be extracted")
-        else:
-            st.error("Could not fetch article text")
+        return translations
+        
+    except Exception as e:
+        st.error(f"HF API Error: {str(e)}")
+        return []
 
 # --- Streamlit UI ---
 def main():
@@ -244,68 +188,77 @@ def main():
     # Get secrets
     secrets = get_secrets()
     
-    # Sidebar for configuration
-
+    # --- Secure Sidebar Configuration ---
     with st.sidebar:
-    st.header("Configuration")
-    
-    # Get secrets (will be empty dict if no secrets.toml)
-    secrets = get_secrets()  # Your existing function
-    
-    # --- Token Input Fields with Security ---
-    # Notion Token
-    if not secrets.get("NOTION_TOKEN"):
-        notion_token = st.text_input("Notion Token", type="password")
-        st.warning("Using temporary token - add to secrets.toml for persistence")
-    else:
-        notion_token = secrets["NOTION_TOKEN"]
-        if st.toggle("Show Notion Token"):
-            st.text_input("Notion Token", value=notion_token, disabled=True)
-        else:
-            st.success("✅ Notion Token loaded (hidden)")
-    
-    # Database ID (less sensitive but still should be protected)
-    if not secrets.get("DATABASE_ID"):
-        database_id = st.text_input("Database ID")
-    else:
-        database_id = secrets["DATABASE_ID"]
-        st.text_input("Database ID", value="************", disabled=True)
-    
-    # HuggingFace Token
-    if not secrets.get("HF_TOKEN"):
-        hf_token = st.text_input("HuggingFace Token", type="password")
-    else:
-        hf_token = secrets["HF_TOKEN"]
-        st.success("✅ HF Token loaded (hidden)")
-    
-    # --- Test Connections Button (unchanged) ---
-    if st.button("Test Connections"):
-        col1, col2 = st.columns(2)
-        with col1:
-            if notion_token and database_id:
-                try:
-                    existing_words = get_existing_words(notion_token, database_id)
-                    st.success(f"✅ Notion: {len(existing_words)} words")
-                except Exception as e:
-                    st.error(f"❌ Notion: {str(e)}")
-            else:
-                st.warning("Notion credentials missing")
+        st.header("Configuration")
         
-        with col2:
-            if hf_token:
-                st.info("HF check would run here")
-                st.success("✅ HF Connected")
+        # Notion Token
+        if secrets.get("NOTION_TOKEN"):
+            notion_token = secrets["NOTION_TOKEN"]
+            if st.toggle("Show Notion Token", False):
+                st.text_input("Notion Token", value=f"{notion_token[:4]}...{notion_token[-4:]}", disabled=True)
             else:
-                st.warning("HF token missing")
-
-# Rest of your code remains unchanged
-tab1, tab2 = st.tabs(["From Article URL", "Manual Entry"])
+                st.success("✅ Notion Token loaded")
+        else:
+            notion_token = st.text_input("Notion Token", type="password")
+            st.warning("Using temporary token - add to secrets.toml for persistence")
+        
+        # Database ID
+        if secrets.get("DATABASE_ID"):
+            database_id = secrets["DATABASE_ID"]
+            st.text_input("Database ID", value="************", disabled=True)
+        else:
+            database_id = st.text_input("Database ID")
+        
+        # HuggingFace Token
+        if secrets.get("HF_TOKEN"):
+            hf_token = secrets["HF_TOKEN"]
+            if st.toggle("Show HF Token", False):
+                st.text_input("HF Token", value=f"{hf_token[:4]}...{hf_token[-4:]}", disabled=True)
+            else:
+                st.success("✅ HF Token loaded")
+        else:
+            hf_token = st.text_input("HuggingFace Token", type="password")
+            st.warning("Using temporary token - add to secrets.toml for persistence")
+        
+        # Test Connections
+        if st.button("Test Connections"):
+            col1, col2 = st.columns(2)
+            with col1:
+                if notion_token and database_id:
+                    try:
+                        existing_words = get_existing_words(notion_token, database_id)
+                        st.success(f"✅ Notion: {len(existing_words)} words")
+                    except Exception as e:
+                        st.error(f"❌ Notion: {str(e)}")
+                else:
+                    st.warning("Notion credentials missing")
+            
+            with col2:
+                if hf_token:
+                    try:
+                        test = requests.get(
+                            "https://huggingface.co/api/whoami",
+                            headers={"Authorization": f"Bearer {hf_token}"},
+                            timeout=5
+                        )
+                        if test.status_code == 200:
+                            st.success(f"✅ HF: {test.json()['name']}")
+                        else:
+                            st.error(f"❌ HF: Invalid token")
+                    except Exception as e:
+                        st.error(f"❌ HF: Connection failed")
+                else:
+                    st.warning("HF token missing")
+    
+    # --- Main Content ---
+    tab1, tab2 = st.tabs(["From Article URL", "Manual Entry"])
     
     with tab1:
         st.header("Extract Vocabulary from Article")
         article_url = st.text_input("Enter Spanish Article URL")
         difficulty = st.selectbox("Vocabulary Difficulty Level", 
-                                ["Intermediate", "Advanced", "Interesting Phrases"])
+                                ["Intermediate", "Advanced"])
         
         if st.button("Extract Vocabulary"):
             if not article_url:
@@ -315,9 +268,24 @@ tab1, tab2 = st.tabs(["From Article URL", "Manual Entry"])
             elif not hf_token:
                 st.warning("Please configure HuggingFace token")
             else:
-                # Run the async processing
-                import asyncio
-                asyncio.run(process_article(article_url, difficulty, hf_token))
+                with st.spinner("Processing article..."):
+                    article_text = await fetch_article_text(article_url)
+                    
+                    if article_text:
+                        st.session_state.article_text = article_text
+                        st.text_area("Extracted Article Text", 
+                                   value=article_text[:1000] + ("..." if len(article_text) > 1000 else ""), 
+                                   height=200)
+                        
+                        vocabulary = await extract_vocabulary_with_hf(article_text, hf_token)
+                        
+                        if vocabulary:
+                            st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
+                            st.success(f"Found {len(vocabulary)} vocabulary items")
+                        else:
+                            st.warning("No vocabulary could be extracted")
+                    else:
+                        st.error("Could not fetch article text")
     
     with tab2:
         st.header("Manually Add Vocabulary")
@@ -390,4 +358,5 @@ tab1, tab2 = st.tabs(["From Article URL", "Manual Entry"])
                         st.error(f"Error: {str(e)}")
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
