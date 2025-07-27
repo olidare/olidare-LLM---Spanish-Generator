@@ -141,7 +141,6 @@ async def fetch_article_text(url: str) -> str:
 async def extract_vocabulary_with_hf(text: str, difficulty: str, hf_token: str) -> List[Dict]:
     """
     Extract vocabulary from text using HuggingFace Inference API.
-    Uses the 'Helsinki-NLP/opus-mt-es-en' model for translation.
     """
     try:
         # Truncate text if too long (HF API has limits)
@@ -163,7 +162,6 @@ async def extract_vocabulary_with_hf(text: str, difficulty: str, hf_token: str) 
                 "Content-Type": "application/json"
             }
             
-            # Using a conversational model that can follow instructions
             payload = {
                 "inputs": prompt,
                 "parameters": {
@@ -184,14 +182,11 @@ async def extract_vocabulary_with_hf(text: str, difficulty: str, hf_token: str) 
                 return []
             
             try:
-                # Try to parse the response as JSON
                 result = response.json()
                 if isinstance(result, list):
                     return result
                 elif isinstance(result, dict):
-                    # Handle cases where the response is wrapped differently
                     generated_text = result.get("generated_text", "")
-                    # Try to extract JSON from the response text
                     json_start = generated_text.find('[')
                     json_end = generated_text.rfind(']') + 1
                     if json_start != -1 and json_end != -1:
@@ -205,6 +200,34 @@ async def extract_vocabulary_with_hf(text: str, difficulty: str, hf_token: str) 
     except Exception as e:
         st.error(f"Error with HF API: {str(e)}")
         return []
+
+# --- Async Wrapper for Streamlit ---
+async def process_article(article_url: str, difficulty: str, hf_token: str):
+    """Async function to process article and extract vocabulary"""
+    with st.spinner("Processing article..."):
+        # Fetch article text
+        article_text = await fetch_article_text(article_url)
+        
+        if article_text:
+            st.session_state.article_text = article_text
+            st.text_area("Extracted Article Text", 
+                       value=article_text[:2000] + ("..." if len(article_text) > 2000 else ""), 
+                       height=200)
+            
+            # Extract vocabulary using HF
+            vocabulary = await extract_vocabulary_with_hf(
+                article_text, 
+                difficulty, 
+                hf_token
+            )
+            
+            if vocabulary:
+                st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
+                st.success(f"Found {len(vocabulary)} vocabulary items")
+            else:
+                st.warning("No vocabulary could be extracted")
+        else:
+            st.error("Could not fetch article text")
 
 # --- Streamlit UI ---
 def main():
@@ -245,7 +268,6 @@ def main():
             with col2:
                 if hf_token:
                     st.info("HF check would run here")
-                    # In a real app, you'd make a test API call
                     st.success("✅ HF Connected")
                 else:
                     st.warning("HF token missing")
@@ -267,30 +289,9 @@ def main():
             elif not hf_token:
                 st.warning("Please configure HuggingFace token")
             else:
-                with st.spinner("Processing article..."):
-                    # Fetch article text
-                    article_text = await fetch_article_text(article_url)
-                    
-                    if article_text:
-                        st.session_state.article_text = article_text
-                        st.text_area("Extracted Article Text", 
-                                   value=article_text[:2000] + ("..." if len(article_text) > 2000 else ""), 
-                                   height=200)
-                        
-                        # Extract vocabulary using HF
-                        vocabulary = await extract_vocabulary_with_hf(
-                            article_text, 
-                            difficulty, 
-                            hf_token
-                        )
-                        
-                        if vocabulary:
-                            st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
-                            st.success(f"Found {len(vocabulary)} vocabulary items")
-                        else:
-                            st.warning("No vocabulary could be extracted")
-                    else:
-                        st.error("Could not fetch article text")
+                # Run the async processing
+                import asyncio
+                asyncio.run(process_article(article_url, difficulty, hf_token))
     
     with tab2:
         st.header("Manually Add Vocabulary")
@@ -363,5 +364,4 @@ def main():
                         st.error(f"Error: {str(e)}")
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
