@@ -14,18 +14,23 @@ import ssl
 import certifi
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
 
 # Create SSL context for requests
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 # --- Constants - Updated to match Notion DB ---
-DEFAULT_FIELDS = ["Spanish", "English", "Difficulty Level", "Category", "Reveal Answer", "Correct Answer", "Status", "Date Added"]
+DEFAULT_FIELDS = ["Spanish", "English", "Difficulty Level", "Category", "Reveal Answer", "Correct Answer", "Status",
+                  "Date Added"]
 
 # Category options matching your Notion DB (with added 'Useful Phrases')
 CATEGORY_OPTIONS = [
     "Culture / Media",
-    "Health / Body", 
+    "Health / Body",
     "Politics / Economy",
     "Emotions / Relationships",
     "Travel / Tourism",
@@ -50,7 +55,7 @@ AI_PROVIDERS = {
         "requires_key": True
     },
     "Groq (Free)": {
-        "url": "https://api.groq.com/openai/v1/chat/completions", 
+        "url": "https://api.groq.com/openai/v1/chat/completions",
         "model": "llama3-8b-8192",
         "requires_key": True
     },
@@ -60,6 +65,7 @@ AI_PROVIDERS = {
         "requires_key": False
     }
 }
+
 
 # --- Helper Functions ---
 def get_difficulty_from_slider(slider_value: int) -> str:
@@ -71,6 +77,7 @@ def get_difficulty_from_slider(slider_value: int) -> str:
     else:
         return "Advanced"
 
+
 # --- Secrets Configuration ---
 def get_secrets():
     """Get secrets from Streamlit secrets or environment variables"""
@@ -80,10 +87,10 @@ def get_secrets():
         "GROQ_TOKEN": None,
         "OPENROUTER_TOKEN": None
     }
-    
+
     try:
         secrets["NOTION_TOKEN"] = st.secrets.get("NOTION_TOKEN")
-        secrets["DATABASE_ID"] = st.secrets.get("DATABASE_ID") 
+        secrets["DATABASE_ID"] = st.secrets.get("DATABASE_ID")
         secrets["GROQ_TOKEN"] = st.secrets.get("GROQ_TOKEN")
         secrets["OPENROUTER_TOKEN"] = st.secrets.get("OPENROUTER_TOKEN")
     except FileNotFoundError:
@@ -91,13 +98,15 @@ def get_secrets():
         secrets["DATABASE_ID"] = os.environ.get("DATABASE_ID")
         secrets["GROQ_TOKEN"] = os.environ.get("GROQ_TOKEN")
         secrets["OPENROUTER_TOKEN"] = os.environ.get("OPENROUTER_TOKEN")
-        
+
     return secrets
 
+
 # --- AI Vocabulary Analysis ---
-async def analyze_vocabulary_with_ai(text: str, provider_config: Dict, api_key: str = None, difficulty_level: str = "Intermediate") -> List[Dict]:
+async def analyze_vocabulary_with_ai(text: str, provider_config: Dict, api_key: str = None,
+                                     difficulty_level: str = "Intermediate") -> List[Dict]:
     """Use AI to intelligently extract and analyze vocabulary"""
-    
+
     prompt = f"""
 You are a Spanish language learning expert. Analyze the following Spanish text and extract 15-25 of the MOST USEFUL vocabulary words for {difficulty_level} Spanish learners.
 
@@ -134,7 +143,7 @@ Respond in JSON format:
 
     try:
         headers = {"Content-Type": "application/json"}
-        
+
         if provider_config["requires_key"] and api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         elif provider_config["requires_key"] and not api_key:
@@ -164,16 +173,16 @@ Respond in JSON format:
                 headers=headers,
                 json=payload
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
-                
+
                 # Extract content based on API format
                 if "ollama" in provider_config["url"]:
                     content = data.get("message", {}).get("content", "")
                 else:
                     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                
+
                 # Parse JSON response
                 try:
                     # Extract JSON from response (in case there's extra text)
@@ -181,7 +190,7 @@ Respond in JSON format:
                     if json_match:
                         vocab_data = json.loads(json_match.group())
                         vocabulary = vocab_data.get("vocabulary", [])
-                        
+
                         # Convert to our format matching Notion DB
                         result = []
                         for item in vocabulary:
@@ -195,12 +204,12 @@ Respond in JSON format:
                                 "Status": "Not started",
                                 "Date Added": datetime.today().date()  # Use date object instead of string
                             })
-                        
+
                         return result
                     else:
                         st.error("Could not parse AI response as JSON")
                         return []
-                        
+
                 except json.JSONDecodeError as e:
                     st.error(f"JSON parsing error: {str(e)}")
                     st.text("Raw AI response:")
@@ -209,10 +218,11 @@ Respond in JSON format:
             else:
                 st.error(f"AI API error: {response.status_code} - {response.text}")
                 return []
-                
+
     except Exception as e:
         st.error(f"Error calling AI API: {str(e)}")
         return []
+
 
 # --- Notion API Functions ---
 @st.cache_data(ttl=3600)
@@ -222,7 +232,7 @@ def get_existing_words(notion_token: str, database_id: str, check_field: str = "
         "Content-Type": "application/json",
         "Notion-Version": "2022-06-28",
     }
-    
+
     existing_words = set()
     has_more = True
     next_cursor = None
@@ -249,26 +259,27 @@ def get_existing_words(notion_token: str, database_id: str, check_field: str = "
 
     return existing_words
 
+
 def create_page(row: Dict, notion_token: str, database_id: str) -> bool:
     headers = {
         "Authorization": f"Bearer {notion_token}",
         "Content-Type": "application/json",
         "Notion-Version": "2022-06-28",
     }
-    
+
     today = datetime.today().strftime("%Y-%m-%d")
 
     properties = {
-        "parent": { "database_id": database_id },
+        "parent": {"database_id": database_id},
         "properties": {
             "Spanish": {
-                "title": [{ "text": { "content": row["Spanish"] } }]
+                "title": [{"text": {"content": row["Spanish"]}}]
             },
             "English": {
-                "rich_text": [{ "text": { "content": str(row["English"]) } }]
+                "rich_text": [{"text": {"content": str(row["English"])}}]
             },
             "Date Added": {
-                "date": { "start": today }
+                "date": {"start": today}
             }
         }
     }
@@ -306,85 +317,277 @@ def create_page(row: Dict, notion_token: str, database_id: str) -> bool:
     response = requests.post("https://api.notion.com/v1/pages", headers=headers, json=properties)
     return response.status_code == 200
 
-# --- Async Functions ---
-async def fetch_article_text(url: str) -> str:
-    # First try static scraping (faster for static sites)
-    static_text = await _fetch_static(url)
-    if len(static_text) > 200:  # Valid static content
-        return static_text
 
-    # Fall back to dynamic scraping if static fails
-    return await _fetch_dynamic(url)
+# --- Enhanced Web Scraping Functions ---
+def setup_chrome_driver():
+    """Setup Chrome driver with optimal settings"""
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-plugins")
+    chrome_options.add_argument("--disable-images")
+    chrome_options.add_argument("--disable-javascript")  # We'll enable selectively
+    chrome_options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        return driver
+    except Exception as e:
+        st.error(f"Failed to setup Chrome driver: {e}")
+        return None
+
+
+async def fetch_article_text(url: str) -> str:
+    """Enhanced article fetching with multiple fallback methods"""
+    st.info("🔍 Starting article extraction...")
+
+    # Method 1: Static scraping with custom headers
+    text = await _fetch_static(url)
+    if len(text) > 300:
+        st.success("✅ Successfully extracted using static method")
+        return text
+
+    # Method 2: Selenium with JavaScript enabled
+    text = await _fetch_with_selenium(url)
+    if len(text) > 300:
+        st.success("✅ Successfully extracted using Selenium")
+        return text
+
+    # Method 3: Try different user agents
+    text = await _fetch_with_different_headers(url)
+    if len(text) > 300:
+        st.success("✅ Successfully extracted with alternative headers")
+        return text
+
+    st.error("❌ All extraction methods failed")
+    return ""
+
 
 async def _fetch_static(url: str) -> str:
-    """Traditional scraping for static sites"""
+    """Enhanced static scraping with better headers"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0'
+    }
+
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=10.0)
+        async with httpx.AsyncClient(
+                headers=headers,
+                timeout=15.0,
+                follow_redirects=True,
+                verify=ssl_context
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+
             soup = BeautifulSoup(response.text, 'html.parser')
-            text = soup.get_text()
-            return re.sub(r'\s+', ' ', text).strip()
-    except Exception:
+
+            # Remove unwanted elements
+            for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']):
+                element.decompose()
+
+            # Try to find main content areas
+            content_selectors = [
+                'article', '[role="main"]', 'main', '.content', '.post-content',
+                '.entry-content', '.article-content', '.post-body', '.text-content'
+            ]
+
+            text = ""
+            for selector in content_selectors:
+                content_area = soup.select_one(selector)
+                if content_area:
+                    text = content_area.get_text()
+                    break
+
+            # Fallback to body if no specific content area found
+            if not text:
+                text = soup.get_text()
+
+            # Clean up text
+            text = re.sub(r'\s+', ' ', text).strip()
+            return text
+
+    except Exception as e:
+        st.warning(f"Static fetch failed: {str(e)}")
         return ""
 
 
-async def _fetch_dynamic(url: str) -> str:
-    """Selenium/Playwright for JS sites"""
+async def _fetch_with_selenium(url: str) -> str:
+    """Selenium-based scraping for JavaScript-heavy sites"""
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(url, timeout=10000)
-            content = await page.content()
-            await browser.close()
-            soup = BeautifulSoup(content, 'html.parser')
-            text = soup.get_text()
-            return re.sub(r'\s+', ' ', text).strip()
-    except Exception:
+        # Use asyncio to run selenium in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        text = await loop.run_in_executor(None, _selenium_scrape, url)
+        return text
+    except Exception as e:
+        st.warning(f"Selenium fetch failed: {str(e)}")
         return ""
 
-async def process_article(article_url: str, provider_config: Dict, api_key: str = None, difficulty_level: str = "Intermediate"):
+
+def _selenium_scrape(url: str) -> str:
+    """Selenium scraping function (runs in thread pool)"""
+    driver = None
+    try:
+        driver = setup_chrome_driver()
+        if not driver:
+            return ""
+
+        # Set page load timeout
+        driver.set_page_load_timeout(15)
+        driver.implicitly_wait(10)
+
+        # Navigate to page
+        driver.get(url)
+
+        # Wait for content to load
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "article"))
+            )
+        except:
+            # If no article tag, wait for body
+            WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+
+        # Try to find main content
+        content_selectors = [
+            "article", "[role='main']", "main", ".content", ".post-content",
+            ".entry-content", ".article-content", ".post-body"
+        ]
+
+        text = ""
+        for selector in content_selectors:
+            try:
+                element = driver.find_element(By.CSS_SELECTOR, selector)
+                text = element.text
+                if len(text) > 200:
+                    break
+            except:
+                continue
+
+        # Fallback to body text
+        if not text:
+            text = driver.find_element(By.TAG_NAME, "body").text
+
+        return re.sub(r'\s+', ' ', text).strip()
+
+    except Exception as e:
+        st.warning(f"Selenium execution failed: {str(e)}")
+        return ""
+    finally:
+        if driver:
+            driver.quit()
+
+
+async def _fetch_with_different_headers(url: str) -> str:
+    """Try different user agents and headers"""
+    user_agents = [
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    ]
+
+    for user_agent in user_agents:
+        try:
+            headers = {
+                'User-Agent': user_agent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'es,en-US;q=0.7,en;q=0.3',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
+
+            async with httpx.AsyncClient(
+                    headers=headers,
+                    timeout=10.0,
+                    follow_redirects=True
+            ) as client:
+                response = await client.get(url)
+
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.text, 'html.parser')
+
+                    # Remove unwanted elements
+                    for element in soup(['script', 'style', 'nav', 'header', 'footer']):
+                        element.decompose()
+
+                    text = soup.get_text()
+                    text = re.sub(r'\s+', ' ', text).strip()
+
+                    if len(text) > 300:
+                        return text
+
+        except Exception:
+            continue
+
+    return ""
+
+
+async def process_article(article_url: str, provider_config: Dict, api_key: str = None,
+                          difficulty_level: str = "Intermediate"):
     with st.spinner("Fetching article..."):
         article_text = await fetch_article_text(article_url)
-        
+
         if not article_text:
-            st.error("Could not fetch article text")
+            st.error(
+                "❌ Could not fetch article text. The site might be blocking automated access or requires JavaScript.")
+            st.info("💡 Try copying and pasting the text manually in the 'Manual Entry' tab.")
             return
-            
+
         if len(article_text) < 200:
-            st.warning("Article text seems too short. Please check the URL.")
+            st.warning("⚠️ Article text seems too short. Please check the URL or try a different article.")
+            st.info(f"Extracted text length: {len(article_text)} characters")
             return
-            
+
         st.session_state.article_text = article_text
-        
+
         # Show preview of article
-        with st.expander("Article Preview"):
-            st.text_area("Extracted Article Text", 
-                        value=article_text[:1000] + ("..." if len(article_text) > 1000 else ""), 
-                        height=200)
-    
-    with st.spinner("AI is analyzing vocabulary..."):
+        with st.expander("📄 Article Preview"):
+            st.text_area("Extracted Article Text",
+                         value=article_text[:1500] + ("..." if len(article_text) > 1500 else ""),
+                         height=300,
+                         help=f"Total characters: {len(article_text)}")
+
+    with st.spinner("🤖 AI is analyzing vocabulary..."):
         vocabulary = await analyze_vocabulary_with_ai(article_text, provider_config, api_key, difficulty_level)
-        
+
         if vocabulary:
             st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
-            st.success(f"AI extracted {len(vocabulary)} useful vocabulary items at {difficulty_level} level!")
-            
+            st.success(f"🎉 AI extracted {len(vocabulary)} useful vocabulary items at {difficulty_level} level!")
+
             # Show difficulty breakdown
             if vocabulary and 'Difficulty Level' in vocabulary[0]:
                 difficulty_counts = pd.Series([v['Difficulty Level'] for v in vocabulary]).value_counts()
-                st.write("**Difficulty Breakdown:**")
+                st.write("**📊 Difficulty Breakdown:**")
                 for diff, count in difficulty_counts.items():
                     st.write(f"- {diff}: {count} words")
-                    
+
             # Show category breakdown
             if vocabulary and 'Category' in vocabulary[0]:
                 category_counts = pd.Series([v['Category'] for v in vocabulary]).value_counts()
-                st.write("**Category Breakdown:**")
+                st.write("**🏷️ Category Breakdown:**")
                 for cat, count in category_counts.items():
                     st.write(f"- {cat}: {count} words")
         else:
-            st.warning("AI could not extract vocabulary. Please try a different article or check your API configuration.")
+            st.warning(
+                "⚠️ AI could not extract vocabulary. Please try a different article or check your API configuration.")
+
 
 # --- Streamlit App ---
 def main():
@@ -439,14 +642,14 @@ def main():
                     st.success("✅ Groq Token loaded")
                 else:
                     ai_api_key = st.text_input("Groq API Key", type="password",
-                                             help="Get free API key from console.groq.com")
+                                               help="Get free API key from console.groq.com")
             elif selected_provider == "OpenRouter (Free)":
                 if secrets.get("OPENROUTER_TOKEN"):
                     ai_api_key = secrets["OPENROUTER_TOKEN"]
                     st.success("✅ OpenRouter Token loaded")
                 else:
                     ai_api_key = st.text_input("OpenRouter API Key", type="password",
-                                             help="Get free credits from openrouter.ai")
+                                               help="Get free credits from openrouter.ai")
             else:
                 ai_api_key = st.text_input(f"{selected_provider} API Key", type="password")
         else:
@@ -475,12 +678,17 @@ def main():
                     st.warning("⚠️ API key needed")
 
     # Main tabs
-    tab1, tab2 = st.tabs(["📰 From Article URL", "✏️ Manual Entry"])
+    tab1, tab2, tab3 = st.tabs(["📰 From Article URL", "✏️ Manual Entry", "📝 From Text"])
 
     with tab1:
         st.header("Extract Vocabulary from Spanish Article")
 
-        article_url = st.text_input("🔗 Enter Spanish Article URL", placeholder="https://elpais.com/...")
+        st.info(
+            "💡 **Tip**: This tool works best with news articles, blogs, and educational content. Some sites may block automated access.")
+
+        article_url = st.text_input("🔗 Enter Spanish Article URL",
+                                    placeholder="https://elpais.com/...",
+                                    help="Paste any Spanish article URL here")
 
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -492,6 +700,7 @@ def main():
                 else:
                     difficulty_level = get_difficulty_from_slider(difficulty_slider)
                     asyncio.run(process_article(article_url, provider_config, ai_api_key, difficulty_level))
+
     with tab2:
         st.header("Manually Add Vocabulary")
 
@@ -575,6 +784,41 @@ def main():
             st.session_state.vocabulary_df = edited_df
             st.success("Vocabulary list updated!")
 
+    with tab3:
+        st.header("Extract Vocabulary from Text")
+        st.info("💡 **Perfect for when URLs don't work!** Copy and paste Spanish text directly here.")
+
+        # Text input area
+        spanish_text = st.text_area(
+            "📝 Paste Spanish Text Here",
+            height=300,
+            placeholder="Paste your Spanish article, blog post, or any text here...",
+            help="Copy text from any Spanish source and paste it here for AI analysis"
+        )
+
+        # Character count
+        if spanish_text:
+            char_count = len(spanish_text)
+            st.caption(f"Characters: {char_count}")
+
+            if char_count < 100:
+                st.warning("⚠️ Text seems short. For best results, use at least 100 characters.")
+            elif char_count > 5000:
+                st.info("ℹ️ Long text detected. AI will analyze the first 3000 characters.")
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if st.button("🤖 Analyze Text with AI", type="primary"):
+                if not spanish_text.strip():
+                    st.warning("Please paste some Spanish text")
+                elif len(spanish_text.strip()) < 50:
+                    st.warning("Please provide more text (at least 50 characters)")
+                elif provider_config["requires_key"] and not ai_api_key:
+                    st.warning(f"Please configure {selected_provider} API key")
+                else:
+                    difficulty_level = get_difficulty_from_slider(difficulty_slider)
+                    asyncio.run(process_text_directly(spanish_text, provider_config, ai_api_key, difficulty_level))
+
     # Review and Push Section
     if 'vocabulary_df' in st.session_state and not st.session_state.vocabulary_df.empty:
         st.divider()
@@ -643,6 +887,43 @@ def main():
 
                     except Exception as e:
                         st.error(f"Error pushing to Notion: {str(e)}")
+
+
+# --- Additional Helper Function for Direct Text Processing ---
+async def process_text_directly(text: str, provider_config: Dict, api_key: str = None,
+                                difficulty_level: str = "Intermediate"):
+    """Process text directly without URL fetching"""
+
+    with st.spinner("🤖 AI is analyzing vocabulary..."):
+        vocabulary = await analyze_vocabulary_with_ai(text, provider_config, api_key, difficulty_level)
+
+        if vocabulary:
+            st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
+            st.success(f"🎉 AI extracted {len(vocabulary)} useful vocabulary items at {difficulty_level} level!")
+
+            # Show text preview
+            with st.expander("📄 Text Preview"):
+                st.text_area("Analyzed Text",
+                             value=text[:1500] + ("..." if len(text) > 1500 else ""),
+                             height=200,
+                             help=f"Total characters: {len(text)}")
+
+            # Show difficulty breakdown
+            if vocabulary and 'Difficulty Level' in vocabulary[0]:
+                difficulty_counts = pd.Series([v['Difficulty Level'] for v in vocabulary]).value_counts()
+                st.write("**📊 Difficulty Breakdown:**")
+                for diff, count in difficulty_counts.items():
+                    st.write(f"- {diff}: {count} words")
+
+            # Show category breakdown
+            if vocabulary and 'Category' in vocabulary[0]:
+                category_counts = pd.Series([v['Category'] for v in vocabulary]).value_counts()
+                st.write("**🏷️ Category Breakdown:**")
+                for cat, count in category_counts.items():
+                    st.write(f"- {cat}: {count} words")
+        else:
+            st.warning("⚠️ AI could not extract vocabulary. Please try different text or check your API configuration.")
+
 
 if __name__ == "__main__":
     main()
