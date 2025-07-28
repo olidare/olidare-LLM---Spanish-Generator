@@ -382,12 +382,12 @@ async def process_article(article_url: str, provider_config: Dict, api_key: str 
 def main():
     st.title("🎓 AI-Powered Spanish Vocabulary Collector")
     st.markdown("*Intelligently extract useful vocabulary from Spanish articles using AI*")
-    
+
     secrets = get_secrets()
-    
+
     with st.sidebar:
         st.header("⚙️ Configuration")
-        
+
         # Difficulty Level Slider
         st.subheader("Difficulty Level")
         difficulty_slider = st.slider(
@@ -398,11 +398,11 @@ def main():
             step=1,
             help="1-3: Beginner, 4-7: Intermediate, 8-10: Advanced"
         )
-        
+
         # Visual indicator
         difficulty_level = get_difficulty_from_slider(difficulty_slider)
         st.write(f"**Selected Level:** {difficulty_slider} ({difficulty_level})")
-        
+
         # Notion Configuration
         st.subheader("Notion Setup")
         if secrets.get("NOTION_TOKEN"):
@@ -410,18 +410,18 @@ def main():
             st.success("✅ Notion Token loaded")
         else:
             notion_token = st.text_input("Notion Token", type="password")
-        
+
         if secrets.get("DATABASE_ID"):
             database_id = secrets["DATABASE_ID"]
             st.success("✅ Database ID loaded")
         else:
             database_id = st.text_input("Database ID")
-        
+
         # AI Provider Configuration
         st.subheader("AI Provider")
         selected_provider = st.selectbox("Choose AI Provider", list(AI_PROVIDERS.keys()))
         provider_config = AI_PROVIDERS[selected_provider]
-        
+
         # Get the appropriate API key based on provider
         ai_api_key = None
         if provider_config["requires_key"]:
@@ -430,7 +430,7 @@ def main():
                     ai_api_key = secrets["GROQ_TOKEN"]
                     st.success("✅ Groq Token loaded")
                 else:
-                    ai_api_key = st.text_input("Groq API Key", type="password", 
+                    ai_api_key = st.text_input("Groq API Key", type="password",
                                              help="Get free API key from console.groq.com")
             elif selected_provider == "OpenRouter (Free)":
                 if secrets.get("OPENROUTER_TOKEN"):
@@ -443,11 +443,11 @@ def main():
                 ai_api_key = st.text_input(f"{selected_provider} API Key", type="password")
         else:
             st.info("Local Ollama - no API key needed")
-        
+
         # Test Connections
         if st.button("🔧 Test Connections"):
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 st.write("**Notion:**")
                 if notion_token and database_id:
@@ -458,7 +458,7 @@ def main():
                         st.error(f"❌ Failed: {str(e)}")
                 else:
                     st.warning("⚠️ Credentials missing")
-            
+
             with col2:
                 st.write(f"**{selected_provider}:**")
                 if not provider_config["requires_key"] or ai_api_key:
@@ -468,12 +468,12 @@ def main():
 
     # Main tabs
     tab1, tab2 = st.tabs(["📰 From Article URL", "✏️ Manual Entry"])
-    
+
     with tab1:
         st.header("Extract Vocabulary from Spanish Article")
-        
+
         article_url = st.text_input("🔗 Enter Spanish Article URL", placeholder="https://elpais.com/...")
-        
+
         col1, col2 = st.columns([3, 1])
         with col1:
             if st.button("🤖 Extract with AI", type="primary"):
@@ -484,62 +484,98 @@ def main():
                 else:
                     difficulty_level = get_difficulty_from_slider(difficulty_slider)
                     asyncio.run(process_article(article_url, provider_config, ai_api_key, difficulty_level))
-    
     with tab2:
         st.header("Manually Add Vocabulary")
-        
+
+        # Initialize DataFrame with proper columns and types if it doesn't exist
         if 'vocabulary_df' not in st.session_state:
-            # Initialize with proper data types
-            empty_data = {
-                "Spanish": [],
-                "English": [],
-                "Difficulty Level": [],
-                "Category": [],
-                "Reveal Answer": [],
-                "Correct Answer": [],
-                "Status": [],
-                "Date Added": []
-            }
-            st.session_state.vocabulary_df = pd.DataFrame(empty_data)
-        
+            st.session_state.vocabulary_df = pd.DataFrame({
+                "Spanish": pd.Series(dtype='str'),
+                "English": pd.Series(dtype='str'),
+                "Difficulty Level": pd.Series(dtype='str'),
+                "Category": pd.Series(dtype='str'),
+                "Reveal Answer": pd.Series(dtype='bool'),
+                "Correct Answer": pd.Series(dtype='str'),
+                "Status": pd.Series(dtype='str'),
+                "Date Added": pd.Series(dtype='datetime64[ns]')
+            })
+
+        # Ensure all columns exist and have correct types
+        df = st.session_state.vocabulary_df
+        for col in DEFAULT_FIELDS:
+            if col not in df.columns:
+                if col == "Reveal Answer":
+                    df[col] = False
+                elif col == "Date Added":
+                    df[col] = pd.to_datetime(datetime.today().date())
+                else:
+                    df[col] = ""
+
+        # Convert date column to datetime if it's not already
+        if 'Date Added' in df:
+            df['Date Added'] = pd.to_datetime(df['Date Added'])
+
+        # Create the data editor with robust column configuration
         edited_df = st.data_editor(
-            st.session_state.vocabulary_df,
+            df,
             num_rows="dynamic",
             column_config={
-                "Spanish": st.column_config.TextColumn(required=True, width="medium"),
-                "English": st.column_config.TextColumn(required=True, width="medium"),
+                "Spanish": st.column_config.TextColumn(
+                    "Spanish",
+                    required=True,
+                    default=""
+                ),
+                "English": st.column_config.TextColumn(
+                    "English",
+                    required=True,
+                    default=""
+                ),
                 "Difficulty Level": st.column_config.SelectboxColumn(
+                    "Difficulty Level",
                     options=DIFFICULTY_OPTIONS,
                     default="Intermediate"
                 ),
                 "Category": st.column_config.SelectboxColumn(
+                    "Category",
                     options=CATEGORY_OPTIONS,
                     default="General / Everyday"
                 ),
-                "Correct Answer": st.column_config.TextColumn(width="medium"),
-                "Reveal Answer": st.column_config.CheckboxColumn(default=False),
+                "Correct Answer": st.column_config.TextColumn(
+                    "Correct Answer",
+                    default=""
+                ),
+                "Reveal Answer": st.column_config.CheckboxColumn(
+                    "Reveal Answer",
+                    default=False
+                ),
                 "Status": st.column_config.SelectboxColumn(
+                    "Status",
                     options=STATUS_OPTIONS,
                     default="Not started"
                 ),
-                "Date Added": st.column_config.DateColumn()
+                "Date Added": st.column_config.DateColumn(
+                    "Date Added",
+                    format="YYYY-MM-DD",
+                    default=datetime.today().date()
+                )
             },
+            hide_index=True,
             use_container_width=True
         )
-        
+
         if st.button("💾 Update Vocabulary List"):
             st.session_state.vocabulary_df = edited_df
             st.success("Vocabulary list updated!")
-    
+
     # Review and Push Section
     if 'vocabulary_df' in st.session_state and not st.session_state.vocabulary_df.empty:
         st.divider()
         st.header("📋 Review & Push to Notion")
-        
+
         # Show summary
         df = st.session_state.vocabulary_df
         col1, col2, col3 = st.columns(3)
-        
+
         with col1:
             st.metric("Total Words", len(df))
         with col2:
@@ -550,10 +586,10 @@ def main():
             if 'Category' in df.columns:
                 most_common_cat = df['Category'].mode().iloc[0] if not df['Category'].empty else "N/A"
                 st.metric("Most Common Category", most_common_cat)
-        
+
         # Show the data
         st.dataframe(df, use_container_width=True)
-        
+
         if st.button("🚀 Push to Notion", type="primary"):
             if not notion_token or not database_id:
                 st.warning("Please configure Notion connection")
@@ -562,41 +598,41 @@ def main():
                     try:
                         # Get existing words in lowercase for comparison
                         existing_words = {word.lower() for word in get_existing_words(notion_token, database_id)}
-                        
+
                         # Clean and filter the DataFrame
                         df_clean = df.dropna(subset=["Spanish"])
                         df_clean = df_clean[df_clean["Spanish"].str.strip() != ""]  # Remove empty strings
-                        
+
                         # Check for duplicates (case-insensitive)
                         df_clean["is_duplicate"] = df_clean["Spanish"].str.lower().isin(existing_words)
                         duplicates = df_clean[df_clean["is_duplicate"]]
                         new_words = df_clean[~df_clean["is_duplicate"]]
-                        
+
                         if not duplicates.empty:
                             st.warning(f"Found {len(duplicates)} duplicates that won't be added:")
                             st.dataframe(duplicates[["Spanish", "English"]])
-                        
+
                         if new_words.empty:
                             st.warning("No new words to add after duplicate check")
                         else:
                             progress_bar = st.progress(0)
                             success_count = 0
-                            
+
                             for i, row in enumerate(new_words.to_dict("records")):
                                 if create_page(row, notion_token, database_id):
                                     success_count += 1
                                 progress_bar.progress((i + 1) / len(new_words))
                                 time.sleep(0.3)  # Rate limiting
-                            
+
                             st.success(f"🎉 Successfully added {success_count} new words to Notion!")
                             st.balloons()
-                            
+
                             # Clear the vocabulary after successful push
                             if st.button("Clear Vocabulary List"):
                                 empty_data = {col: [] for col in DEFAULT_FIELDS}
                                 st.session_state.vocabulary_df = pd.DataFrame(empty_data)
                                 st.rerun()
-                                
+
                     except Exception as e:
                         st.error(f"Error pushing to Notion: {str(e)}")
 
