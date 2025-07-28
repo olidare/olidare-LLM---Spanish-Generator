@@ -179,7 +179,7 @@ Respond in JSON format:
                                 "Reveal Answer": False,
                                 "Correct Answer": "",  # Empty by default
                                 "Status": "Not started",
-                                "Date Added": datetime.today().strftime("%Y-%m-%d")
+                                "Date Added": datetime.today().date()  # Use date object instead of string
                             })
                         
                         return result
@@ -462,7 +462,18 @@ def main():
         st.header("Manually Add Vocabulary")
         
         if 'vocabulary_df' not in st.session_state:
-            st.session_state.vocabulary_df = pd.DataFrame(columns=DEFAULT_FIELDS)
+            # Initialize with proper data types
+            empty_data = {
+                "Spanish": [],
+                "English": [],
+                "Difficulty Level": [],
+                "Category": [],
+                "Reveal Answer": [],
+                "Correct Answer": [],
+                "Status": [],
+                "Date Added": []
+            }
+            st.session_state.vocabulary_df = pd.DataFrame(empty_data)
         
         edited_df = st.data_editor(
             st.session_state.vocabulary_df,
@@ -543,7 +554,18 @@ def main():
                         
                         # Clear the vocabulary after successful push
                         if st.button("Clear Vocabulary List"):
-                            st.session_state.vocabulary_df = pd.DataFrame(columns=DEFAULT_FIELDS)
+                            # Reset with proper data types
+                            empty_data = {
+                                "Spanish": [],
+                                "English": [],
+                                "Difficulty Level": [],
+                                "Category": [],
+                                "Reveal Answer": [],
+                                "Correct Answer": [],
+                                "Status": [],
+                                "Date Added": []
+                            }
+                            st.session_state.vocabulary_df = pd.DataFrame(empty_data)
                             st.rerun()
                             
                     except Exception as e:
