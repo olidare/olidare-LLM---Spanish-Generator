@@ -12,6 +12,9 @@ import os
 import asyncio
 import ssl
 import certifi
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Create SSL context for requests
 ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -305,34 +308,39 @@ def create_page(row: Dict, notion_token: str, database_id: str) -> bool:
 
 # --- Async Functions ---
 async def fetch_article_text(url: str) -> str:
+    # First try static scraping (faster for static sites)
+    static_text = await _fetch_static(url)
+    if len(static_text) > 200:  # Valid static content
+        return static_text
+
+    # Fall back to dynamic scraping if static fails
+    return await _fetch_dynamic(url)
+
+async def _fetch_static(url: str) -> str:
+    """Traditional scraping for static sites"""
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=10.0)
             soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Remove unwanted elements
-            for element in soup(['script', 'style', 'nav', 'footer', 'iframe', 'img', 'header']):
-                element.decompose()
-            
-            # Try to find main content
-            content_selectors = ['article', '.content', '.post-content', '.entry-content', 'main', '.article-body']
-            main_content = None
-            
-            for selector in content_selectors:
-                main_content = soup.select_one(selector)
-                if main_content:
-                    break
-            
-            if not main_content:
-                main_content = soup
-            
-            text = main_content.get_text()
-            # Clean up whitespace
-            text = re.sub(r'\s+', ' ', text).strip()
-            return text
-            
-    except Exception as e:
-        st.error(f"Error fetching article: {str(e)}")
+            text = soup.get_text()
+            return re.sub(r'\s+', ' ', text).strip()
+    except Exception:
+        return ""
+
+
+async def _fetch_dynamic(url: str) -> str:
+    """Selenium/Playwright for JS sites"""
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=10000)
+            content = await page.content()
+            await browser.close()
+            soup = BeautifulSoup(content, 'html.parser')
+            text = soup.get_text()
+            return re.sub(r'\s+', ' ', text).strip()
+    except Exception:
         return ""
 
 async def process_article(article_url: str, provider_config: Dict, api_key: str = None, difficulty_level: str = "Intermediate"):
