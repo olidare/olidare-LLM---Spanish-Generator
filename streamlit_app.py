@@ -10,7 +10,6 @@ from typing import List, Dict, Set
 import httpx
 import os
 import asyncio
-from googletrans import Translator
 import ssl
 import certifi
 
