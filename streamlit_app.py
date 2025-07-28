@@ -88,33 +88,33 @@ async def process_article(article_url: str, provider_config: Dict, api_key: str 
 # Modify the push to Notion section to check for duplicates
 if 'vocabulary_df' in st.session_state and not st.session_state.vocabulary_df.empty:
     # ... (existing code until push button)
-    
-    if st.button("🚀 Push to Notion", type="primary"):
-        if not notion_token or not database_id:
-            st.warning("Please configure Notion connection")
-        else:
-            with st.spinner("Pushing to Notion..."):
-                try:
-                    # Get existing words in lowercase for comparison
-                    existing_words = {word.lower() for word in get_existing_words(notion_token, database_id)}
-                    
-                    # Clean and filter the DataFrame
-                    df_clean = st.session_state.vocabulary_df.dropna(subset=["Spanish"])
-                    df_clean = df_clean[df_clean["Spanish"].str.strip() != ""]  # Remove empty strings
-                    
-                    # Check for duplicates (case-insensitive)
-                    df_clean["is_duplicate"] = df_clean["Spanish"].str.lower().isin(existing_words)
-                    duplicates = df_clean[df_clean["is_duplicate"]]
-                    new_words = df_clean[~df_clean["is_duplicate"]]
-                    
-                    if not duplicates.empty:
-                        st.warning(f"Found {len(duplicates)} duplicates that won't be added:")
-                        st.dataframe(duplicates[["Spanish", "English"]])
-                    
-                    if new_words.empty:
-                        st.warning("No new words to add after duplicate check")
-                        return
-                    
+    # In the "Review & Push to Notion" section, replace the push button logic with this:
+
+if st.button("🚀 Push to Notion", type="primary"):
+    if not notion_token or not database_id:
+        st.warning("Please configure Notion connection")
+    else:
+        with st.spinner("Pushing to Notion..."):
+            try:
+                # Get existing words in lowercase for comparison
+                existing_words = {word.lower() for word in get_existing_words(notion_token, database_id)}
+                
+                # Clean and filter the DataFrame
+                df_clean = st.session_state.vocabulary_df.dropna(subset=["Spanish"])
+                df_clean = df_clean[df_clean["Spanish"].str.strip() != ""]  # Remove empty strings
+                
+                # Check for duplicates (case-insensitive)
+                df_clean["is_duplicate"] = df_clean["Spanish"].str.lower().isin(existing_words)
+                duplicates = df_clean[df_clean["is_duplicate"]]
+                new_words = df_clean[~df_clean["is_duplicate"]]
+                
+                if not duplicates.empty:
+                    st.warning(f"Found {len(duplicates)} duplicates that won't be added:")
+                    st.dataframe(duplicates[["Spanish", "English"]])
+                
+                if new_words.empty:
+                    st.warning("No new words to add after duplicate check")
+                else:
                     progress_bar = st.progress(0)
                     success_count = 0
                     
@@ -133,5 +133,5 @@ if 'vocabulary_df' in st.session_state and not st.session_state.vocabulary_df.em
                         st.session_state.vocabulary_df = pd.DataFrame(empty_data)
                         st.rerun()
                         
-                except Exception as e:
-                    st.error(f"Error pushing to Notion: {str(e)}")
+            except Exception as e:
+                st.error(f"Error pushing to Notion: {str(e)}")
