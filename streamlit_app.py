@@ -10,10 +10,34 @@ from typing import List, Dict, Set
 import httpx
 import os
 import asyncio
+from googletrans import Translator
+import ssl
+import certifi
+
+# Create SSL context for requests
+ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 # --- Constants ---
-DEFAULT_FIELDS = ["Spanish", "English", "Date Added", "Reveal Answer", "Status", "Correct Answer"]
-HF_MODEL = "Helsinki-NLP/opus-mt-es-en"
+DEFAULT_FIELDS = ["Spanish", "English", "Date Added", "Reveal Answer", "Status", "Correct Answer", "Difficulty", "Word Type", "Context"]
+
+# AI API Configuration
+AI_PROVIDERS = {
+    "OpenRouter (Free)": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "meta-llama/llama-3.1-8b-instruct:free",
+        "requires_key": True
+    },
+    "Groq (Free)": {
+        "url": "https://api.groq.com/openai/v1/chat/completions", 
+        "model": "llama3-8b-8192",
+        "requires_key": True
+    },
+    "Ollama (Local)": {
+        "url": "http://localhost:11434/api/chat",
+        "model": "llama3.1",
+        "requires_key": False
+    }
+}
 
 # --- Secrets Configuration ---
 def get_secrets():
@@ -21,19 +45,138 @@ def get_secrets():
     secrets = {
         "NOTION_TOKEN": None,
         "DATABASE_ID": None,
-        "HF_TOKEN": None
+        "AI_API_KEY": None
     }
     
     try:
         secrets["NOTION_TOKEN"] = st.secrets.get("NOTION_TOKEN")
-        secrets["DATABASE_ID"] = st.secrets.get("DATABASE_ID")
-        secrets["HF_TOKEN"] = st.secrets.get("HF_TOKEN")
+        secrets["DATABASE_ID"] = st.secrets.get("DATABASE_ID") 
+        secrets["AI_API_KEY"] = st.secrets.get("AI_API_KEY")
     except FileNotFoundError:
         secrets["NOTION_TOKEN"] = os.environ.get("NOTION_TOKEN")
         secrets["DATABASE_ID"] = os.environ.get("DATABASE_ID")
-        secrets["HF_TOKEN"] = os.environ.get("HF_TOKEN")
+        secrets["AI_API_KEY"] = os.environ.get("AI_API_KEY")
         
     return secrets
+
+# --- AI Vocabulary Analysis ---
+async def analyze_vocabulary_with_ai(text: str, provider_config: Dict, api_key: str = None) -> List[Dict]:
+    """Use AI to intelligently extract and analyze vocabulary"""
+    
+    prompt = f"""
+You are a Spanish language learning expert. Analyze the following Spanish text and extract 15-25 of the MOST USEFUL vocabulary words for intermediate Spanish learners.
+
+SELECTION CRITERIA:
+- Focus on words that are: commonly used, educationally valuable, not too basic (avoid "el", "la", "es", "muy", etc.)
+- Prioritize: nouns, adjectives, verbs, and useful phrases
+- Include a mix of difficulty levels but lean toward intermediate/advanced
+- Avoid proper nouns unless culturally significant
+- Consider words that appear multiple times as more important
+
+For each selected word, provide:
+1. The Spanish word/phrase (exactly as it appears)
+2. English translation
+3. Difficulty level (Beginner/Intermediate/Advanced)
+4. Word type (Noun/Verb/Adjective/Phrase/Idiom)
+5. A brief context note about why it's useful
+
+TEXT TO ANALYZE:
+{text[:3000]}
+
+Respond in JSON format:
+{{
+  "vocabulary": [
+    {{
+      "spanish": "word",
+      "english": "translation", 
+      "difficulty": "Intermediate",
+      "type": "Noun",
+      "context": "Common in news articles about politics"
+    }}
+  ]
+}}
+"""
+
+    try:
+        headers = {"Content-Type": "application/json"}
+        
+        if provider_config["requires_key"] and api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        elif provider_config["requires_key"] and not api_key:
+            st.error("API key required for this provider")
+            return []
+
+        # Handle different API formats
+        if "ollama" in provider_config["url"]:
+            # Ollama format
+            payload = {
+                "model": provider_config["model"],
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False
+            }
+        else:
+            # OpenAI-compatible format
+            payload = {
+                "model": provider_config["model"],
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 2000,
+                "temperature": 0.3
+            }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                provider_config["url"],
+                headers=headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Extract content based on API format
+                if "ollama" in provider_config["url"]:
+                    content = data.get("message", {}).get("content", "")
+                else:
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                
+                # Parse JSON response
+                try:
+                    # Extract JSON from response (in case there's extra text)
+                    json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                    if json_match:
+                        vocab_data = json.loads(json_match.group())
+                        vocabulary = vocab_data.get("vocabulary", [])
+                        
+                        # Convert to our format
+                        result = []
+                        for item in vocabulary:
+                            result.append({
+                                "Spanish": item.get("spanish", ""),
+                                "English": item.get("english", ""),
+                                "Difficulty": item.get("difficulty", "Intermediate"),
+                                "Word Type": item.get("type", "Unknown"),
+                                "Context": item.get("context", ""),
+                                "Reveal Answer": False,
+                                "Status": "Not started"
+                            })
+                        
+                        return result
+                    else:
+                        st.error("Could not parse AI response as JSON")
+                        return []
+                        
+                except json.JSONDecodeError as e:
+                    st.error(f"JSON parsing error: {str(e)}")
+                    st.text("Raw AI response:")
+                    st.text(content[:500])
+                    return []
+            else:
+                st.error(f"AI API error: {response.status_code} - {response.text}")
+                return []
+                
+    except Exception as e:
+        st.error(f"Error calling AI API: {str(e)}")
+        return []
 
 # --- Notion API Functions ---
 @st.cache_data(ttl=3600)
@@ -94,22 +237,19 @@ def create_page(row: Dict, notion_token: str, database_id: str) -> bool:
         }
     }
 
-    if "Reveal Answer" in row:
-        properties["properties"]["Reveal Answer"] = {
-            "checkbox": bool(row["Reveal Answer"]) if pd.notna(row["Reveal Answer"]) else False
-        }
-
-    if "Status" in row:
-        properties["properties"]["Status"] = {
-            "status": {
-                "name": str(row["Status"]) if pd.notna(row["Status"]) else "Not started"
-            }
-        }
-
-    if "Correct Answer" in row and pd.notna(row["Correct Answer"]):
-        properties["properties"]["Correct Answer"] = {
-            "rich_text": [{ "text": { "content": str(row["Correct Answer"]) } }]
-        }
+    # Add optional fields
+    optional_fields = ["Reveal Answer", "Status", "Correct Answer", "Difficulty", "Word Type", "Context"]
+    
+    for field in optional_fields:
+        if field in row and pd.notna(row[field]):
+            if field == "Reveal Answer":
+                properties["properties"][field] = {"checkbox": bool(row[field])}
+            elif field == "Status":
+                properties["properties"][field] = {"status": {"name": str(row[field])}}
+            else:
+                properties["properties"][field] = {
+                    "rich_text": [{"text": {"content": str(row[field])}}]
+                }
 
     response = requests.post("https://api.notion.com/v1/pages", headers=headers, json=properties)
     return response.status_code == 200
@@ -120,134 +260,150 @@ async def fetch_article_text(url: str) -> str:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=10.0)
             soup = BeautifulSoup(response.text, 'html.parser')
-            for element in soup(['script', 'style', 'nav', 'footer', 'iframe', 'img']):
+            
+            # Remove unwanted elements
+            for element in soup(['script', 'style', 'nav', 'footer', 'iframe', 'img', 'header']):
                 element.decompose()
-            text = soup.get_text()
-            return re.sub(r'\s+', ' ', text).strip()
+            
+            # Try to find main content
+            content_selectors = ['article', '.content', '.post-content', '.entry-content', 'main', '.article-body']
+            main_content = None
+            
+            for selector in content_selectors:
+                main_content = soup.select_one(selector)
+                if main_content:
+                    break
+            
+            if not main_content:
+                main_content = soup
+            
+            text = main_content.get_text()
+            # Clean up whitespace
+            text = re.sub(r'\s+', ' ', text).strip()
+            return text
+            
     except Exception as e:
         st.error(f"Error fetching article: {str(e)}")
         return ""
 
-async def extract_vocabulary_with_hf(text: str, hf_token: str) -> List[Dict]:
-    try:
-        API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
-        headers = {"Authorization": f"Bearer {hf_token}"}
-        spanish_words = list(set(re.findall(r'\b[a-zA-ZáéíóúñÁÉÍÓÚÑ]{5,}\b', text[:2000])))
-        
-        translations = []
-        async with httpx.AsyncClient() as client:
-            for word in spanish_words[:20]:
-                response = await client.post(
-                    API_URL,
-                    headers=headers,
-                    json={"inputs": word},
-                    timeout=30.0
-                )
-                if response.status_code == 200:
-                    translations.append({
-                        "Spanish": word,
-                        "English": response.json()[0]['translation_text'],
-                        "Reveal Answer": False,
-                        "Status": "Not started"
-                    })
-                else:
-                    st.warning(f"Couldn't translate '{word}': {response.text}")
-        return translations
-    except Exception as e:
-        st.error(f"HF API Error: {str(e)}")
-        return []
-
-async def process_article(article_url: str, hf_token: str):
-    with st.spinner("Processing article..."):
+async def process_article(article_url: str, provider_config: Dict, api_key: str = None):
+    with st.spinner("Fetching article..."):
         article_text = await fetch_article_text(article_url)
-        if article_text:
-            st.session_state.article_text = article_text
+        
+        if not article_text:
+            st.error("Could not fetch article text")
+            return
+            
+        if len(article_text) < 200:
+            st.warning("Article text seems too short. Please check the URL.")
+            return
+            
+        st.session_state.article_text = article_text
+        
+        # Show preview of article
+        with st.expander("Article Preview"):
             st.text_area("Extracted Article Text", 
                         value=article_text[:1000] + ("..." if len(article_text) > 1000 else ""), 
                         height=200)
+    
+    with st.spinner("AI is analyzing vocabulary..."):
+        vocabulary = await analyze_vocabulary_with_ai(article_text, provider_config, api_key)
+        
+        if vocabulary:
+            st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
+            st.success(f"AI extracted {len(vocabulary)} useful vocabulary items!")
             
-            vocabulary = await extract_vocabulary_with_hf(article_text, hf_token)
-            if vocabulary:
-                st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
-                st.success(f"Found {len(vocabulary)} vocabulary items")
-            else:
-                st.warning("No vocabulary could be extracted")
+            # Show difficulty breakdown
+            if 'Difficulty' in vocabulary[0]:
+                difficulty_counts = pd.Series([v['Difficulty'] for v in vocabulary]).value_counts()
+                st.write("**Difficulty Breakdown:**")
+                for diff, count in difficulty_counts.items():
+                    st.write(f"- {diff}: {count} words")
         else:
-            st.error("Could not fetch article text")
+            st.warning("AI could not extract vocabulary. Please try a different article or check your API configuration.")
 
 # --- Streamlit App ---
 def main():
-    st.title("Spanish Vocabulary Collector")
+    st.title("🎓 AI-Powered Spanish Vocabulary Collector")
+    st.markdown("*Intelligently extract useful vocabulary from Spanish articles using AI*")
+    
     secrets = get_secrets()
     
     with st.sidebar:
-        st.header("Configuration")
+        st.header("⚙️ Configuration")
         
+        # Notion Configuration
+        st.subheader("Notion Setup")
         if secrets.get("NOTION_TOKEN"):
             notion_token = secrets["NOTION_TOKEN"]
-            if st.toggle("Show Notion Token", False):
-                st.text_input("Notion Token", value=f"{notion_token[:4]}...{notion_token[-4:]}", disabled=True)
-            else:
-                st.success("✅ Notion Token loaded")
+            st.success("✅ Notion Token loaded")
         else:
             notion_token = st.text_input("Notion Token", type="password")
         
         if secrets.get("DATABASE_ID"):
             database_id = secrets["DATABASE_ID"]
-            st.text_input("Database ID", value="************", disabled=True)
+            st.success("✅ Database ID loaded")
         else:
             database_id = st.text_input("Database ID")
         
-        if secrets.get("HF_TOKEN"):
-            hf_token = secrets["HF_TOKEN"]
-            if st.toggle("Show HF Token", False):
-                st.text_input("HF Token", value=f"{hf_token[:4]}...{hf_token[-4:]}", disabled=True)
-            else:
-                st.success("✅ HF Token loaded")
-        else:
-            hf_token = st.text_input("HuggingFace Token", type="password")
+        # AI Provider Configuration
+        st.subheader("AI Provider")
+        selected_provider = st.selectbox("Choose AI Provider", list(AI_PROVIDERS.keys()))
+        provider_config = AI_PROVIDERS[selected_provider]
         
-        if st.button("Test Connections"):
+        if provider_config["requires_key"]:
+            if secrets.get("AI_API_KEY"):
+                ai_api_key = secrets["AI_API_KEY"]
+                st.success("✅ AI API Key loaded")
+            else:
+                ai_api_key = st.text_input(f"{selected_provider} API Key", type="password")
+        else:
+            ai_api_key = None
+            st.info("Local Ollama - no API key needed")
+        
+        # Test Connections
+        if st.button("🔧 Test Connections"):
             col1, col2 = st.columns(2)
+            
             with col1:
+                st.write("**Notion:**")
                 if notion_token and database_id:
                     try:
                         existing_words = get_existing_words(notion_token, database_id)
-                        st.success(f"✅ Notion: {len(existing_words)} words")
+                        st.success(f"✅ Connected ({len(existing_words)} words)")
                     except Exception as e:
-                        st.error(f"❌ Notion: {str(e)}")
+                        st.error(f"❌ Failed: {str(e)}")
+                else:
+                    st.warning("⚠️ Credentials missing")
             
             with col2:
-                if hf_token:
-                    try:
-                        test = requests.get(
-                            "https://huggingface.co/api/whoami",
-                            headers={"Authorization": f"Bearer {hf_token}"},
-                            timeout=5
-                        )
-                        if test.status_code == 200:
-                            st.success(f"✅ HF: {test.json()['name']}")
-                        else:
-                            st.error(f"❌ HF: Invalid token")
-                    except Exception as e:
-                        st.error(f"❌ HF: Connection failed")
+                st.write(f"**{selected_provider}:**")
+                if not provider_config["requires_key"] or ai_api_key:
+                    st.success("✅ Ready")
+                else:
+                    st.warning("⚠️ API key needed")
 
-    tab1, tab2 = st.tabs(["From Article URL", "Manual Entry"])
+    # Main tabs
+    tab1, tab2 = st.tabs(["📰 From Article URL", "✏️ Manual Entry"])
     
     with tab1:
-        st.header("Extract Vocabulary from Article")
-        article_url = st.text_input("Enter Spanish Article URL")
+        st.header("Extract Vocabulary from Spanish Article")
         
-        if st.button("Extract Vocabulary"):
-            if not article_url:
-                st.warning("Please enter a URL")
-            elif not hf_token:
-                st.warning("Please configure HuggingFace token")
-            else:
-                asyncio.run(process_article(article_url, hf_token))
+        article_url = st.text_input("🔗 Enter Spanish Article URL", placeholder="https://elpais.com/...")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if st.button("🤖 Extract with AI", type="primary"):
+                if not article_url:
+                    st.warning("Please enter a URL")
+                elif provider_config["requires_key"] and not ai_api_key:
+                    st.warning(f"Please configure {selected_provider} API key")
+                else:
+                    asyncio.run(process_article(article_url, provider_config, ai_api_key))
     
     with tab2:
         st.header("Manually Add Vocabulary")
+        
         if 'vocabulary_df' not in st.session_state:
             st.session_state.vocabulary_df = pd.DataFrame(columns=DEFAULT_FIELDS)
         
@@ -255,35 +411,62 @@ def main():
             st.session_state.vocabulary_df,
             num_rows="dynamic",
             column_config={
-                "Spanish": st.column_config.TextColumn(required=True),
-                "English": st.column_config.TextColumn(required=True),
+                "Spanish": st.column_config.TextColumn(required=True, width="medium"),
+                "English": st.column_config.TextColumn(required=True, width="medium"),
+                "Difficulty": st.column_config.SelectboxColumn(
+                    options=["Beginner", "Intermediate", "Advanced"],
+                    default="Intermediate"
+                ),
+                "Word Type": st.column_config.SelectboxColumn(
+                    options=["Noun", "Verb", "Adjective", "Phrase", "Idiom", "Other"],
+                    default="Noun"
+                ),
+                "Context": st.column_config.TextColumn(width="large"),
                 "Reveal Answer": st.column_config.CheckboxColumn(default=False),
                 "Status": st.column_config.SelectboxColumn(
                     options=["Not started", "Learning", "Mastered"],
                     default="Not started"
-                ),
-                "Correct Answer": st.column_config.TextColumn()
-            }
+                )
+            },
+            use_container_width=True
         )
         
-        if st.button("Update Vocabulary List"):
+        if st.button("💾 Update Vocabulary List"):
             st.session_state.vocabulary_df = edited_df
+            st.success("Vocabulary list updated!")
     
+    # Review and Push Section
     if 'vocabulary_df' in st.session_state and not st.session_state.vocabulary_df.empty:
         st.divider()
-        st.header("Review & Push to Notion")
-        st.dataframe(st.session_state.vocabulary_df)
+        st.header("📋 Review & Push to Notion")
         
-        if st.button("Push to Notion"):
+        # Show summary
+        df = st.session_state.vocabulary_df
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total Words", len(df))
+        with col2:
+            if 'Difficulty' in df.columns:
+                intermediate_count = len(df[df['Difficulty'] == 'Intermediate'])
+                st.metric("Intermediate", intermediate_count)
+        with col3:
+            if 'Word Type' in df.columns:
+                noun_count = len(df[df['Word Type'] == 'Noun'])
+                st.metric("Nouns", noun_count)
+        
+        # Show the data
+        st.dataframe(df, use_container_width=True)
+        
+        if st.button("🚀 Push to Notion", type="primary"):
             if not notion_token or not database_id:
                 st.warning("Please configure Notion connection")
             else:
-                with st.spinner("Processing..."):
+                with st.spinner("Pushing to Notion..."):
                     try:
                         existing_words = get_existing_words(notion_token, database_id)
-                        df = st.session_state.vocabulary_df
-                        df = df.dropna(subset=["Spanish"])
-                        new_rows = df[~df["Spanish"].str.lower().isin(existing_words)]
+                        df_clean = df.dropna(subset=["Spanish"])
+                        new_rows = df_clean[~df_clean["Spanish"].str.lower().isin(existing_words)]
                         
                         if new_rows.empty:
                             st.warning("All words already exist in Notion")
@@ -296,11 +479,17 @@ def main():
                             if create_page(row, notion_token, database_id):
                                 success_count += 1
                             progress_bar.progress((i + 1) / len(new_rows))
-                            time.sleep(0.3)
+                            time.sleep(0.3)  # Rate limiting
                         
-                        st.success(f"Added {success_count} new words to Notion!")
+                        st.success(f"🎉 Successfully added {success_count} new words to Notion!")
+                        
+                        # Clear the vocabulary after successful push
+                        if st.button("Clear Vocabulary List"):
+                            st.session_state.vocabulary_df = pd.DataFrame(columns=DEFAULT_FIELDS)
+                            st.rerun()
+                            
                     except Exception as e:
-                        st.error(f"Error: {str(e)}")
+                        st.error(f"Error pushing to Notion: {str(e)}")
 
 if __name__ == "__main__":
     main()
