@@ -16,8 +16,27 @@ import certifi
 # Create SSL context for requests
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 
-# --- Constants ---
-DEFAULT_FIELDS = ["Spanish", "English", "Date Added", "Reveal Answer", "Status", "Correct Answer", "Difficulty", "Word Type", "Context"]
+# --- Constants - Updated to match Notion DB ---
+DEFAULT_FIELDS = ["Spanish", "English", "Difficulty Level", "Category", "Reveal Answer", "Correct Answer", "Status", "Date Added"]
+
+# Category options matching your Notion DB
+CATEGORY_OPTIONS = [
+    "Culture / Media",
+    "Health / Body", 
+    "Politics / Economy",
+    "Emotions / Relationships",
+    "Travel / Tourism",
+    "Academic / Education",
+    "Technology",
+    "Professional / Business",
+    "General / Everyday"
+]
+
+# Difficulty Level options
+DIFFICULTY_OPTIONS = ["Beginner", "Intermediate", "Advanced"]
+
+# Status options
+STATUS_OPTIONS = ["Not started", "Done"]
 
 # AI API Configuration
 AI_PROVIDERS = {
@@ -79,7 +98,7 @@ For each selected word, provide:
 1. The Spanish word/phrase (exactly as it appears)
 2. English translation
 3. Difficulty level (Beginner/Intermediate/Advanced)
-4. Word type (Noun/Verb/Adjective/Phrase/Idiom)
+4. Category from: Culture/Media, Health/Body, Politics/Economy, Emotions/Relationships, Travel/Tourism, Academic/Education, Technology, Professional/Business, General/Everyday
 5. A brief context note about why it's useful
 
 TEXT TO ANALYZE:
@@ -92,7 +111,7 @@ Respond in JSON format:
       "spanish": "word",
       "english": "translation", 
       "difficulty": "Intermediate",
-      "type": "Noun",
+      "category": "General / Everyday",
       "context": "Common in news articles about politics"
     }}
   ]
@@ -149,17 +168,18 @@ Respond in JSON format:
                         vocab_data = json.loads(json_match.group())
                         vocabulary = vocab_data.get("vocabulary", [])
                         
-                        # Convert to our format
+                        # Convert to our format matching Notion DB
                         result = []
                         for item in vocabulary:
                             result.append({
                                 "Spanish": item.get("spanish", ""),
                                 "English": item.get("english", ""),
-                                "Difficulty": item.get("difficulty", "Intermediate"),
-                                "Word Type": item.get("type", "Unknown"),
-                                "Context": item.get("context", ""),
+                                "Difficulty Level": item.get("difficulty", "Intermediate"),
+                                "Category": item.get("category", "General / Everyday"),
                                 "Reveal Answer": False,
-                                "Status": "Not started"
+                                "Correct Answer": "",  # Empty by default
+                                "Status": "Not started",
+                                "Date Added": datetime.today().strftime("%Y-%m-%d")
                             })
                         
                         return result
@@ -239,19 +259,35 @@ def create_page(row: Dict, notion_token: str, database_id: str) -> bool:
         }
     }
 
-    # Add optional fields
-    optional_fields = ["Reveal Answer", "Status", "Correct Answer", "Difficulty", "Word Type", "Context"]
-    
-    for field in optional_fields:
-        if field in row and pd.notna(row[field]):
-            if field == "Reveal Answer":
-                properties["properties"][field] = {"checkbox": bool(row[field])}
-            elif field == "Status":
-                properties["properties"][field] = {"status": {"name": str(row[field])}}
-            else:
-                properties["properties"][field] = {
-                    "rich_text": [{"text": {"content": str(row[field])}}]
-                }
+    # Handle Difficulty Level (select property)
+    if "Difficulty Level" in row and pd.notna(row["Difficulty Level"]):
+        properties["properties"]["Difficulty Level"] = {
+            "select": {"name": str(row["Difficulty Level"])}
+        }
+
+    # Handle Category (select property)
+    if "Category" in row and pd.notna(row["Category"]):
+        properties["properties"]["Category"] = {
+            "select": {"name": str(row["Category"])}
+        }
+
+    # Handle Reveal Answer (checkbox)
+    if "Reveal Answer" in row and pd.notna(row["Reveal Answer"]):
+        properties["properties"]["Reveal Answer"] = {
+            "checkbox": bool(row["Reveal Answer"])
+        }
+
+    # Handle Correct Answer (rich text)
+    if "Correct Answer" in row and pd.notna(row["Correct Answer"]):
+        properties["properties"]["Correct Answer"] = {
+            "rich_text": [{"text": {"content": str(row["Correct Answer"])}}]
+        }
+
+    # Handle Status (status property)
+    if "Status" in row and pd.notna(row["Status"]):
+        properties["properties"]["Status"] = {
+            "status": {"name": str(row["Status"])}
+        }
 
     response = requests.post("https://api.notion.com/v1/pages", headers=headers, json=properties)
     return response.status_code == 200
@@ -316,11 +352,18 @@ async def process_article(article_url: str, provider_config: Dict, api_key: str 
             st.success(f"AI extracted {len(vocabulary)} useful vocabulary items!")
             
             # Show difficulty breakdown
-            if 'Difficulty' in vocabulary[0]:
-                difficulty_counts = pd.Series([v['Difficulty'] for v in vocabulary]).value_counts()
+            if vocabulary and 'Difficulty Level' in vocabulary[0]:
+                difficulty_counts = pd.Series([v['Difficulty Level'] for v in vocabulary]).value_counts()
                 st.write("**Difficulty Breakdown:**")
                 for diff, count in difficulty_counts.items():
                     st.write(f"- {diff}: {count} words")
+                    
+            # Show category breakdown
+            if vocabulary and 'Category' in vocabulary[0]:
+                category_counts = pd.Series([v['Category'] for v in vocabulary]).value_counts()
+                st.write("**Category Breakdown:**")
+                for cat, count in category_counts.items():
+                    st.write(f"- {cat}: {count} words")
         else:
             st.warning("AI could not extract vocabulary. Please try a different article or check your API configuration.")
 
@@ -427,20 +470,21 @@ def main():
             column_config={
                 "Spanish": st.column_config.TextColumn(required=True, width="medium"),
                 "English": st.column_config.TextColumn(required=True, width="medium"),
-                "Difficulty": st.column_config.SelectboxColumn(
-                    options=["Beginner", "Intermediate", "Advanced"],
+                "Difficulty Level": st.column_config.SelectboxColumn(
+                    options=DIFFICULTY_OPTIONS,
                     default="Intermediate"
                 ),
-                "Word Type": st.column_config.SelectboxColumn(
-                    options=["Noun", "Verb", "Adjective", "Phrase", "Idiom", "Other"],
-                    default="Noun"
+                "Category": st.column_config.SelectboxColumn(
+                    options=CATEGORY_OPTIONS,
+                    default="General / Everyday"
                 ),
-                "Context": st.column_config.TextColumn(width="large"),
+                "Correct Answer": st.column_config.TextColumn(width="medium"),
                 "Reveal Answer": st.column_config.CheckboxColumn(default=False),
                 "Status": st.column_config.SelectboxColumn(
-                    options=["Not started", "Learning", "Mastered"],
+                    options=STATUS_OPTIONS,
                     default="Not started"
-                )
+                ),
+                "Date Added": st.column_config.DateColumn()
             },
             use_container_width=True
         )
@@ -461,13 +505,13 @@ def main():
         with col1:
             st.metric("Total Words", len(df))
         with col2:
-            if 'Difficulty' in df.columns:
-                intermediate_count = len(df[df['Difficulty'] == 'Intermediate'])
+            if 'Difficulty Level' in df.columns:
+                intermediate_count = len(df[df['Difficulty Level'] == 'Intermediate'])
                 st.metric("Intermediate", intermediate_count)
         with col3:
-            if 'Word Type' in df.columns:
-                noun_count = len(df[df['Word Type'] == 'Noun'])
-                st.metric("Nouns", noun_count)
+            if 'Category' in df.columns:
+                most_common_cat = df['Category'].mode().iloc[0] if not df['Category'].empty else "N/A"
+                st.metric("Most Common Category", most_common_cat)
         
         # Show the data
         st.dataframe(df, use_container_width=True)
