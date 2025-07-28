@@ -45,17 +45,20 @@ def get_secrets():
     secrets = {
         "NOTION_TOKEN": None,
         "DATABASE_ID": None,
-        "AI_API_KEY": None
+        "GROQ_TOKEN": None,
+        "OPENROUTER_TOKEN": None
     }
     
     try:
         secrets["NOTION_TOKEN"] = st.secrets.get("NOTION_TOKEN")
         secrets["DATABASE_ID"] = st.secrets.get("DATABASE_ID") 
-        secrets["AI_API_KEY"] = st.secrets.get("AI_API_KEY")
+        secrets["GROQ_TOKEN"] = st.secrets.get("GROQ_TOKEN")
+        secrets["OPENROUTER_TOKEN"] = st.secrets.get("OPENROUTER_TOKEN")
     except FileNotFoundError:
         secrets["NOTION_TOKEN"] = os.environ.get("NOTION_TOKEN")
         secrets["DATABASE_ID"] = os.environ.get("DATABASE_ID")
-        secrets["AI_API_KEY"] = os.environ.get("AI_API_KEY")
+        secrets["GROQ_TOKEN"] = os.environ.get("GROQ_TOKEN")
+        secrets["OPENROUTER_TOKEN"] = os.environ.get("OPENROUTER_TOKEN")
         
     return secrets
 
@@ -351,14 +354,26 @@ def main():
         selected_provider = st.selectbox("Choose AI Provider", list(AI_PROVIDERS.keys()))
         provider_config = AI_PROVIDERS[selected_provider]
         
+        # Get the appropriate API key based on provider
+        ai_api_key = None
         if provider_config["requires_key"]:
-            if secrets.get("AI_API_KEY"):
-                ai_api_key = secrets["AI_API_KEY"]
-                st.success("✅ AI API Key loaded")
+            if selected_provider == "Groq (Free)":
+                if secrets.get("GROQ_TOKEN"):
+                    ai_api_key = secrets["GROQ_TOKEN"]
+                    st.success("✅ Groq Token loaded")
+                else:
+                    ai_api_key = st.text_input("Groq API Key", type="password", 
+                                             help="Get free API key from console.groq.com")
+            elif selected_provider == "OpenRouter (Free)":
+                if secrets.get("OPENROUTER_TOKEN"):
+                    ai_api_key = secrets["OPENROUTER_TOKEN"]
+                    st.success("✅ OpenRouter Token loaded")
+                else:
+                    ai_api_key = st.text_input("OpenRouter API Key", type="password",
+                                             help="Get free credits from openrouter.ai")
             else:
                 ai_api_key = st.text_input(f"{selected_provider} API Key", type="password")
         else:
-            ai_api_key = None
             st.info("Local Ollama - no API key needed")
         
         # Test Connections
