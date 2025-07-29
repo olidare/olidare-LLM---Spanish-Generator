@@ -12,6 +12,14 @@ This application revolutionizes Spanish language learning by:
 - **Seamlessly syncing** with your Notion database for organized vocabulary management
 - **Providing multiple input methods** - URL scraping, direct text input, or manual entry
 
+
+## ✨ How It Works
+
+| | |
+|-|-|
+| ![Streamlit App](/Assets/Streamlit-App.png) | ![Push to Notion](/Assets/push-to-notion.png) |
+| ![Category](/Assets/category.png) | ![Difficulty](/Assets/difficulty.png) |
+
 ## 🚀 Key Features
 
 ### 🤖 AI-Powered Analysis
@@ -229,14 +237,6 @@ Choose one of these options:
 - **Notion integration** uses official API with proper authentication
 - **Optional local processing** with Ollama for complete privacy
 
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 ## 🙏 Acknowledgments
 
 - Built with [Streamlit](https://streamlit.io/) for the web interface
@@ -250,7 +250,6 @@ If you encounter any issues or have questions:
 1. Check the **Test Connections** feature in the sidebar
 2. Verify your API credentials and Notion database setup
 3. Try different AI providers or articles
-4. Open an issue on GitHub for technical problems
 
 ---
 
