@@ -78,6 +78,111 @@ def get_difficulty_from_slider(slider_value: int) -> str:
         return "Advanced"
 
 
+def is_likely_proper_noun(word: str) -> bool:
+    """Check if a word is likely a proper noun that should be filtered out"""
+    word_lower = word.lower().strip()
+    
+    # Common countries (extend this list as needed)
+    countries = {
+        'españa', 'francia', 'alemania', 'italia', 'portugal', 'brasil', 'argentina', 
+        'chile', 'colombia', 'méxico', 'venezuela', 'perú', 'ecuador', 'bolivia',
+        'uruguay', 'paraguay', 'costa rica', 'guatemala', 'honduras', 'nicaragua',
+        'panamá', 'república dominicana', 'cuba', 'puerto rico', 'estados unidos',
+        'reino unido', 'china', 'japón', 'india', 'rusia', 'canadá', 'australia'
+    }
+    
+    # Common cities
+    cities = {
+        'madrid', 'barcelona', 'valencia', 'sevilla', 'zaragoza', 'málaga', 'murcia',
+        'palma', 'bilbao', 'alicante', 'córdoba', 'valladolid', 'vigo', 'gijón',
+        'hospitalet', 'vitoria', 'granada', 'elche', 'oviedo', 'badalona', 'cartagena',
+        'terrassa', 'jerez', 'sabadell', 'móstoles', 'santa cruz', 'pamplona', 'almería',
+        'parís', 'londres', 'berlín', 'roma', 'lisboa', 'buenos aires', 'bogotá',
+        'lima', 'santiago', 'caracas', 'quito', 'montevideo', 'asunción'
+    }
+    
+    # Tech tools and programming languages
+    tech_terms = {
+        'python', 'javascript', 'java', 'html', 'css', 'sql', 'php', 'ruby',
+        'swift', 'kotlin', 'react', 'angular', 'vue', 'node', 'django', 'flask',
+        'streamlit', 'pandas', 'numpy', 'tensorflow', 'pytorch', 'git', 'github',
+        'docker', 'kubernetes', 'aws', 'azure', 'google cloud', 'linux', 'windows',
+        'macos', 'android', 'ios', 'mysql', 'postgresql', 'mongodb', 'redis'
+    }
+    
+    # Common brands and companies
+    brands = {
+        'google', 'microsoft', 'apple', 'amazon', 'facebook', 'meta', 'twitter',
+        'instagram', 'whatsapp', 'telegram', 'spotify', 'netflix', 'youtube',
+        'linkedin', 'tiktok', 'uber', 'airbnb', 'paypal', 'visa', 'mastercard',
+        'coca cola', 'pepsi', 'mcdonalds', 'nike', 'adidas', 'samsung', 'sony'
+    }
+    
+    # Check if word is in any of our exclusion lists
+    if word_lower in countries or word_lower in cities or word_lower in tech_terms or word_lower in brands:
+        return True
+    
+    # Check if word starts with capital letter (likely proper noun)
+    if word and word[0].isupper() and len(word) > 2:
+        # But allow some common words that might be capitalized at start of sentence
+        common_capitalized = {'como', 'cuando', 'donde', 'porque', 'aunque', 'mientras', 'durante'}
+        if word_lower not in common_capitalized:
+            return True
+    
+    return False
+
+
+def get_enhanced_prompt(text: str, difficulty_level: str) -> str:
+    """Enhanced prompt with better filtering for proper nouns and tech terms"""
+    return f"""
+You are a Spanish language learning expert. Analyze the following Spanish text and extract 15-25 of the MOST USEFUL vocabulary words for {difficulty_level} Spanish learners.
+
+CRITICAL EXCLUSION RULES - DO NOT INCLUDE:
+- Proper nouns: Names of people, countries, cities, regions, organizations
+- Brand names: Google, Microsoft, Apple, Netflix, etc.
+- Technical terms: Python, JavaScript, HTML, software names, etc.
+- Acronyms and abbreviations: EU, USA, GDP, etc.
+- Numbers and dates as words
+- Very basic words: el, la, es, muy, de, en, con, por, para, que, se, un, una
+
+SELECTION CRITERIA - PRIORITIZE:
+- Common verbs, nouns, adjectives that Spanish learners need
+- Words used in daily conversation and practical situations
+- Academic or professional vocabulary appropriate for the level
+- Phrases that are culturally significant or commonly used
+- Words that appear multiple times in the text (indicating importance)
+- Vocabulary that helps express ideas, emotions, or describe situations
+
+DIFFICULTY GUIDELINES:
+- Beginner: Essential everyday words, basic verbs, common adjectives
+- Intermediate: More complex verbs, descriptive language, abstract concepts
+- Advanced: Sophisticated vocabulary, technical terms (non-brand), nuanced expressions
+
+For each selected word, provide:
+1. The Spanish word/phrase (exactly as it appears, in lowercase unless it's a legitimate proper adjective)
+2. Clear, concise English translation
+3. Difficulty level (Beginner/Intermediate/Advanced)
+4. Most appropriate category
+5. Brief context about why it's educationally valuable
+
+TEXT TO ANALYZE:
+{text[:3000]}
+
+Respond in JSON format:
+{{
+  "vocabulary": [
+    {{
+      "spanish": "palabra",
+      "english": "word", 
+      "difficulty": "{difficulty_level}",
+      "category": "General / Everyday",
+      "context": "Essential vocabulary for daily communication"
+    }}
+  ]
+}}
+"""
+
+
 # --- Secrets Configuration ---
 def get_secrets():
     """Get secrets from Streamlit secrets or environment variables"""
@@ -107,39 +212,7 @@ async def analyze_vocabulary_with_ai(text: str, provider_config: Dict, api_key: 
                                      difficulty_level: str = "Intermediate") -> List[Dict]:
     """Use AI to intelligently extract and analyze vocabulary"""
 
-    prompt = f"""
-You are a Spanish language learning expert. Analyze the following Spanish text and extract 15-25 of the MOST USEFUL vocabulary words for {difficulty_level} Spanish learners.
-
-SELECTION CRITERIA:
-- Focus on words that are: commonly used, educationally valuable, not too basic (avoid "el", "la", "es", "muy", etc.)
-- Prioritize: nouns, adjectives, verbs, and useful phrases
-- Include a mix of difficulty levels but lean toward {difficulty_level}
-- Avoid proper nouns unless culturally significant
-- Consider words that appear multiple times as more important
-
-For each selected word, provide:
-1. The Spanish word/phrase (exactly as it appears)
-2. English translation
-3. Difficulty level (Beginner/Intermediate/Advanced)
-4. Category from: Culture/Media, Health/Body, Politics/Economy, Emotions/Relationships, Travel/Tourism, Academic/Education, Technology, Professional/Business, General/Everyday, Useful Phrases
-5. A brief context note about why it's useful
-
-TEXT TO ANALYZE:
-{text[:3000]}
-
-Respond in JSON format:
-{{
-  "vocabulary": [
-    {{
-      "spanish": "word",
-      "english": "translation", 
-      "difficulty": "{difficulty_level}",
-      "category": "General / Everyday",
-      "context": "Common in news articles about politics"
-    }}
-  ]
-}}
-"""
+    prompt = get_enhanced_prompt(text, difficulty_level)
 
     try:
         headers = {"Content-Type": "application/json"}
@@ -191,19 +264,24 @@ Respond in JSON format:
                         vocab_data = json.loads(json_match.group())
                         vocabulary = vocab_data.get("vocabulary", [])
 
-                        # Convert to our format matching Notion DB
+                        # Convert to our format matching Notion DB and filter out proper nouns
                         result = []
                         for item in vocabulary:
-                            result.append({
-                                "Spanish": item.get("spanish", ""),
-                                "English": item.get("english", ""),
-                                "Difficulty Level": item.get("difficulty", difficulty_level),
-                                "Category": item.get("category", "General / Everyday"),
-                                "Reveal Answer": False,
-                                "Correct Answer": "",  # Empty by default
-                                "Status": "Not started",
-                                "Date Added": datetime.today().date()  # Use date object instead of string
-                            })
+                            spanish_word = item.get("spanish", "").strip()
+                            
+                            # Skip if it's a proper noun
+                            if not is_likely_proper_noun(spanish_word):
+                                result.append({
+                                    "Spanish": spanish_word,
+                                    "English": item.get("english", ""),
+                                    "Difficulty Level": item.get("difficulty", difficulty_level),
+                                    "Category": item.get("category", "General / Everyday"),
+                                    "Reveal Answer": False,
+                                    "Correct Answer": "",  # Empty by default
+                                    "Status": "Not started",
+                                    "Date Added": datetime.today().date(),  # Use date object instead of string
+                                    "Selected": True  # New field for selection
+                                })
 
                         return result
                     else:
@@ -316,6 +394,199 @@ def create_page(row: Dict, notion_token: str, database_id: str) -> bool:
 
     response = requests.post("https://api.notion.com/v1/pages", headers=headers, json=properties)
     return response.status_code == 200
+
+
+def push_to_notion(selected_df: pd.DataFrame, notion_token: str, database_id: str):
+    """Push selected vocabulary to Notion with progress tracking"""
+    try:
+        # Get existing words in lowercase for comparison
+        existing_words = {word.lower() for word in get_existing_words(notion_token, database_id)}
+
+        # Clean and filter the DataFrame
+        df_clean = selected_df.dropna(subset=["Spanish"])
+        df_clean = df_clean[df_clean["Spanish"].str.strip() != ""]  # Remove empty strings
+
+        # Check for duplicates (case-insensitive)
+        df_clean["is_duplicate"] = df_clean["Spanish"].str.lower().isin(existing_words)
+        duplicates = df_clean[df_clean["is_duplicate"]]
+        new_words = df_clean[~df_clean["is_duplicate"]]
+
+        if not duplicates.empty:
+            st.warning(f"Found {len(duplicates)} duplicates that won't be added:")
+            st.dataframe(duplicates[["Spanish", "English"]], use_container_width=True)
+
+        if new_words.empty:
+            st.warning("No new words to add after duplicate check")
+            return False
+        else:
+            progress_bar = st.progress(0)
+            success_count = 0
+
+            for i, row in enumerate(new_words.to_dict("records")):
+                if create_page(row, notion_token, database_id):
+                    success_count += 1
+                progress_bar.progress((i + 1) / len(new_words))
+                time.sleep(0.3)  # Rate limiting
+
+            st.success(f"🎉 Successfully added {success_count} new words to Notion!")
+            st.balloons()
+            return True
+
+    except Exception as e:
+        st.error(f"Error pushing to Notion: {str(e)}")
+        return False
+
+
+def show_word_selection_interface():
+    """Show interface for selecting/deselecting vocabulary words"""
+    if 'vocabulary_df' not in st.session_state or st.session_state.vocabulary_df.empty:
+        return
+
+    df = st.session_state.vocabulary_df
+    
+    # Ensure Selected column exists
+    if 'Selected' not in df.columns:
+        df['Selected'] = True
+        st.session_state.vocabulary_df = df
+
+    st.subheader("🎯 Select Words to Add")
+    
+    # Quick action buttons
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if st.button("✅ Select All"):
+            st.session_state.vocabulary_df['Selected'] = True
+            st.rerun()
+    
+    with col2:
+        if st.button("❌ Deselect All"):
+            st.session_state.vocabulary_df['Selected'] = False
+            st.rerun()
+    
+    with col3:
+        if st.button("🎲 Random 10"):
+            st.session_state.vocabulary_df['Selected'] = False
+            random_indices = df.sample(n=min(10, len(df))).index
+            st.session_state.vocabulary_df.loc[random_indices, 'Selected'] = True
+            st.rerun()
+    
+    with col4:
+        if st.button("🧹 Remove Proper Nouns"):
+            # Apply proper noun filter
+            for idx, row in df.iterrows():
+                if is_likely_proper_noun(row['Spanish']):
+                    st.session_state.vocabulary_df.loc[idx, 'Selected'] = False
+            st.rerun()
+
+    # Show selection stats
+    selected_count = df['Selected'].sum()
+    total_count = len(df)
+    st.info(f"📊 Selected: {selected_count} / {total_count} words")
+
+    # Individual word selection with improved display
+    st.write("**Select individual words:**")
+    
+    # Create columns for better layout
+    for idx, row in df.iterrows():
+        col1, col2 = st.columns([1, 4])
+        
+        with col1:
+            current_selection = st.session_state.vocabulary_df.loc[idx, 'Selected']
+            new_selection = st.checkbox(
+                "Select",
+                value=current_selection,
+                key=f"select_{idx}",
+                label_visibility="collapsed"
+            )
+            
+            if new_selection != current_selection:
+                st.session_state.vocabulary_df.loc[idx, 'Selected'] = new_selection
+        
+        with col2:
+            # Color code based on selection
+            if st.session_state.vocabulary_df.loc[idx, 'Selected']:
+                st.markdown(f"**{row['Spanish']}** → *{row['English']}* | {row['Category']} | {row['Difficulty Level']}")
+            else:
+                st.markdown(f"~~{row['Spanish']} → {row['English']}~~ | {row['Category']} | {row['Difficulty Level']}")
+
+
+def show_review_section():
+    """Enhanced review section with word selection"""
+    if 'vocabulary_df' not in st.session_state or st.session_state.vocabulary_df.empty:
+        return
+
+    st.divider()
+    st.header("📋 Review & Select Words")
+
+    df = st.session_state.vocabulary_df
+    
+    # Ensure Selected column exists
+    if 'Selected' not in df.columns:
+        df['Selected'] = True
+        st.session_state.vocabulary_df = df
+
+    # Show word selection interface
+    show_word_selection_interface()
+
+    # Show preview of selected words
+    selected_df = df[df['Selected'] == True].copy()
+    
+    if not selected_df.empty:
+        st.subheader("📄 Preview: Selected Words")
+        
+        # Show summary metrics
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Selected Words", len(selected_df))
+        with col2:
+            if 'Difficulty Level' in selected_df.columns:
+                intermediate_count = len(selected_df[selected_df['Difficulty Level'] == 'Intermediate'])
+                st.metric("Intermediate", intermediate_count)
+        with col3:
+            if 'Category' in selected_df.columns:
+                most_common_cat = selected_df['Category'].mode().iloc[0] if not selected_df['Category'].empty else "N/A"
+                st.metric("Most Common Category", most_common_cat)
+
+        # Show breakdown
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if 'Difficulty Level' in selected_df.columns:
+                difficulty_counts = selected_df['Difficulty Level'].value_counts()
+                st.write("**📊 Difficulty Breakdown:**")
+                for diff, count in difficulty_counts.items():
+                    st.write(f"- {diff}: {count} words")
+
+        with col2:
+            if 'Category' in selected_df.columns:
+                category_counts = selected_df['Category'].value_counts()
+                st.write("**🏷️ Category Breakdown:**")
+                for cat, count in category_counts.items():
+                    st.write(f"- {cat}: {count} words")
+
+        # Show the selected data in a clean format
+        display_df = selected_df[['Spanish', 'English', 'Difficulty Level', 'Category']].copy()
+        st.dataframe(display_df, use_container_width=True)
+
+        # Push to Notion button
+        secrets = get_secrets()
+        if st.button("🚀 Push Selected Words to Notion", type="primary"):
+            if not secrets.get("NOTION_TOKEN") or not secrets.get("DATABASE_ID"):
+                st.warning("Please configure Notion connection in the sidebar")
+            else:
+                with st.spinner("Pushing selected words to Notion..."):
+                    success = push_to_notion(selected_df, secrets["NOTION_TOKEN"], secrets["DATABASE_ID"])
+                    
+                    if success:
+                        # Clear the vocabulary after successful push
+                        if st.button("🗑️ Clear Vocabulary List"):
+                            empty_data = {col: [] for col in DEFAULT_FIELDS + ['Selected']}
+                            st.session_state.vocabulary_df = pd.DataFrame(empty_data)
+                            st.rerun()
+    else:
+        st.warning("⚠️ No words selected. Please select at least one word to push to Notion.")
 
 
 # --- Enhanced Web Scraping Functions ---
@@ -589,6 +860,42 @@ async def process_article(article_url: str, provider_config: Dict, api_key: str 
                 "⚠️ AI could not extract vocabulary. Please try a different article or check your API configuration.")
 
 
+# --- Additional Helper Function for Direct Text Processing ---
+async def process_text_directly(text: str, provider_config: Dict, api_key: str = None,
+                                difficulty_level: str = "Intermediate"):
+    """Process text directly without URL fetching"""
+
+    with st.spinner("🤖 AI is analyzing vocabulary..."):
+        vocabulary = await analyze_vocabulary_with_ai(text, provider_config, api_key, difficulty_level)
+
+        if vocabulary:
+            st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
+            st.success(f"🎉 AI extracted {len(vocabulary)} useful vocabulary items at {difficulty_level} level!")
+
+            # Show text preview
+            with st.expander("📄 Text Preview"):
+                st.text_area("Analyzed Text",
+                             value=text[:1500] + ("..." if len(text) > 1500 else ""),
+                             height=200,
+                             help=f"Total characters: {len(text)}")
+
+            # Show difficulty breakdown
+            if vocabulary and 'Difficulty Level' in vocabulary[0]:
+                difficulty_counts = pd.Series([v['Difficulty Level'] for v in vocabulary]).value_counts()
+                st.write("**📊 Difficulty Breakdown:**")
+                for diff, count in difficulty_counts.items():
+                    st.write(f"- {diff}: {count} words")
+
+            # Show category breakdown
+            if vocabulary and 'Category' in vocabulary[0]:
+                category_counts = pd.Series([v['Category'] for v in vocabulary]).value_counts()
+                st.write("**🏷️ Category Breakdown:**")
+                for cat, count in category_counts.items():
+                    st.write(f"- {cat}: {count} words")
+        else:
+            st.warning("⚠️ AI could not extract vocabulary. Please try different text or check your API configuration.")
+
+
 # --- Streamlit App ---
 def main():
     st.title("🎓 AI-Powered Spanish Vocabulary Collector")
@@ -714,14 +1021,15 @@ def main():
                 "Reveal Answer": pd.Series(dtype='bool'),
                 "Correct Answer": pd.Series(dtype='str'),
                 "Status": pd.Series(dtype='str'),
-                "Date Added": pd.Series(dtype='datetime64[ns]')
+                "Date Added": pd.Series(dtype='datetime64[ns]'),
+                "Selected": pd.Series(dtype='bool')
             })
 
         # Ensure all columns exist and have correct types
         df = st.session_state.vocabulary_df
-        for col in DEFAULT_FIELDS:
+        for col in DEFAULT_FIELDS + ['Selected']:
             if col not in df.columns:
-                if col == "Reveal Answer":
+                if col == "Reveal Answer" or col == "Selected":
                     df[col] = False
                 elif col == "Date Added":
                     df[col] = pd.to_datetime(datetime.today().date())
@@ -734,7 +1042,7 @@ def main():
 
         # Create the data editor with robust column configuration
         edited_df = st.data_editor(
-            df,
+            df.drop(columns=['Selected']) if 'Selected' in df.columns else df,  # Hide Selected column from manual editor
             num_rows="dynamic",
             column_config={
                 "Spanish": st.column_config.TextColumn(
@@ -781,6 +1089,8 @@ def main():
         )
 
         if st.button("💾 Update Vocabulary List"):
+            # Add Selected column back with all True for manually entered words
+            edited_df['Selected'] = True
             st.session_state.vocabulary_df = edited_df
             st.success("Vocabulary list updated!")
 
@@ -819,110 +1129,8 @@ def main():
                     difficulty_level = get_difficulty_from_slider(difficulty_slider)
                     asyncio.run(process_text_directly(spanish_text, provider_config, ai_api_key, difficulty_level))
 
-    # Review and Push Section
-    if 'vocabulary_df' in st.session_state and not st.session_state.vocabulary_df.empty:
-        st.divider()
-        st.header("📋 Review & Push to Notion")
-
-        # Show summary
-        df = st.session_state.vocabulary_df
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric("Total Words", len(df))
-        with col2:
-            if 'Difficulty Level' in df.columns:
-                intermediate_count = len(df[df['Difficulty Level'] == 'Intermediate'])
-                st.metric("Intermediate", intermediate_count)
-        with col3:
-            if 'Category' in df.columns:
-                most_common_cat = df['Category'].mode().iloc[0] if not df['Category'].empty else "N/A"
-                st.metric("Most Common Category", most_common_cat)
-
-        # Show the data
-        st.dataframe(df, use_container_width=True)
-
-        if st.button("🚀 Push to Notion", type="primary"):
-            if not notion_token or not database_id:
-                st.warning("Please configure Notion connection")
-            else:
-                with st.spinner("Pushing to Notion..."):
-                    try:
-                        # Get existing words in lowercase for comparison
-                        existing_words = {word.lower() for word in get_existing_words(notion_token, database_id)}
-
-                        # Clean and filter the DataFrame
-                        df_clean = df.dropna(subset=["Spanish"])
-                        df_clean = df_clean[df_clean["Spanish"].str.strip() != ""]  # Remove empty strings
-
-                        # Check for duplicates (case-insensitive)
-                        df_clean["is_duplicate"] = df_clean["Spanish"].str.lower().isin(existing_words)
-                        duplicates = df_clean[df_clean["is_duplicate"]]
-                        new_words = df_clean[~df_clean["is_duplicate"]]
-
-                        if not duplicates.empty:
-                            st.warning(f"Found {len(duplicates)} duplicates that won't be added:")
-                            st.dataframe(duplicates[["Spanish", "English"]])
-
-                        if new_words.empty:
-                            st.warning("No new words to add after duplicate check")
-                        else:
-                            progress_bar = st.progress(0)
-                            success_count = 0
-
-                            for i, row in enumerate(new_words.to_dict("records")):
-                                if create_page(row, notion_token, database_id):
-                                    success_count += 1
-                                progress_bar.progress((i + 1) / len(new_words))
-                                time.sleep(0.3)  # Rate limiting
-
-                            st.success(f"🎉 Successfully added {success_count} new words to Notion!")
-                            st.balloons()
-
-                            # Clear the vocabulary after successful push
-                            if st.button("Clear Vocabulary List"):
-                                empty_data = {col: [] for col in DEFAULT_FIELDS}
-                                st.session_state.vocabulary_df = pd.DataFrame(empty_data)
-                                st.rerun()
-
-                    except Exception as e:
-                        st.error(f"Error pushing to Notion: {str(e)}")
-
-
-# --- Additional Helper Function for Direct Text Processing ---
-async def process_text_directly(text: str, provider_config: Dict, api_key: str = None,
-                                difficulty_level: str = "Intermediate"):
-    """Process text directly without URL fetching"""
-
-    with st.spinner("🤖 AI is analyzing vocabulary..."):
-        vocabulary = await analyze_vocabulary_with_ai(text, provider_config, api_key, difficulty_level)
-
-        if vocabulary:
-            st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
-            st.success(f"🎉 AI extracted {len(vocabulary)} useful vocabulary items at {difficulty_level} level!")
-
-            # Show text preview
-            with st.expander("📄 Text Preview"):
-                st.text_area("Analyzed Text",
-                             value=text[:1500] + ("..." if len(text) > 1500 else ""),
-                             height=200,
-                             help=f"Total characters: {len(text)}")
-
-            # Show difficulty breakdown
-            if vocabulary and 'Difficulty Level' in vocabulary[0]:
-                difficulty_counts = pd.Series([v['Difficulty Level'] for v in vocabulary]).value_counts()
-                st.write("**📊 Difficulty Breakdown:**")
-                for diff, count in difficulty_counts.items():
-                    st.write(f"- {diff}: {count} words")
-
-            # Show category breakdown
-            if vocabulary and 'Category' in vocabulary[0]:
-                category_counts = pd.Series([v['Category'] for v in vocabulary]).value_counts()
-                st.write("**🏷️ Category Breakdown:**")
-                for cat, count in category_counts.items():
-                    st.write(f"- {cat}: {count} words")
-        else:
-            st.warning("⚠️ AI could not extract vocabulary. Please try different text or check your API configuration.")
+    # Enhanced Review and Push Section
+    show_review_section()
 
 
 if __name__ == "__main__":
