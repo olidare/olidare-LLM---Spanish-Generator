@@ -19,18 +19,23 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
+import docx
+import PyPDF2
+from io import BytesIO
 
 # Create SSL context for requests
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 
-# --- Constants - Updated to match Notion DB ---
-DEFAULT_FIELDS = ["Spanish", "English", "Difficulty Level", "Category", "Reveal Answer", "Correct Answer", "Status",
-                  "Date Added"]
+# --- Constants - Updated to include phrases ---
+DEFAULT_FIELDS = ["Spanish", "English", "Type", "Difficulty Level", "Category", "Reveal Answer", "Correct Answer", "Status", "Date Added"]
 
-# Category options matching your Notion DB (with added 'Useful Phrases')
+# Type options (new field to distinguish words from phrases)
+TYPE_OPTIONS = ["Word", "Phrase"]
+
+# Category options matching your Notion DB (with added categories for phrases)
 CATEGORY_OPTIONS = [
     "Culture / Media",
-    "Health / Body",
+    "Health / Body", 
     "Politics / Economy",
     "Emotions / Relationships",
     "Travel / Tourism",
@@ -38,7 +43,10 @@ CATEGORY_OPTIONS = [
     "Technology",
     "Professional / Business",
     "General / Everyday",
-    "Useful Phrases"  # New category added
+    "Useful Phrases",
+    "Idioms / Expressions",
+    "Conversational Phrases",
+    "Grammar Structures"
 ]
 
 # Difficulty Level options
@@ -65,6 +73,9 @@ AI_PROVIDERS = {
         "requires_key": False
     }
 }
+
+# Supported file types
+SUPPORTED_FILE_TYPES = ['txt', 'pdf', 'docx', 'doc']
 
 
 # --- Helper Functions ---
@@ -133,9 +144,13 @@ def is_likely_proper_noun(word: str) -> bool:
 
 
 def get_enhanced_prompt(text: str, difficulty_level: str) -> str:
-    """Enhanced prompt with better filtering for proper nouns and tech terms"""
+    """Enhanced prompt to extract both words and phrases"""
     return f"""
-You are a Spanish language learning expert. Analyze the following Spanish text and extract 15-25 of the MOST USEFUL vocabulary words for {difficulty_level} Spanish learners.
+You are a Spanish language learning expert. Analyze the following Spanish text and extract 20-30 of the MOST USEFUL vocabulary items (both individual words AND phrases) for {difficulty_level} Spanish learners.
+
+EXTRACT BOTH:
+1. **INDIVIDUAL WORDS**: Important verbs, nouns, adjectives, adverbs
+2. **USEFUL PHRASES**: Common expressions, idioms, collocations, grammar structures (2-6 words)
 
 CRITICAL EXCLUSION RULES - DO NOT INCLUDE:
 - Proper nouns: Names of people, countries, cities, regions, organizations
@@ -145,42 +160,136 @@ CRITICAL EXCLUSION RULES - DO NOT INCLUDE:
 - Numbers and dates as words
 - Very basic words: el, la, es, muy, de, en, con, por, para, que, se, un, una
 
-SELECTION CRITERIA - PRIORITIZE:
+PHRASE SELECTION CRITERIA:
+- Common collocations (e.g., tener en cuenta, de vez en cuando)
+- Useful expressions (e.g., por lo tanto, sin embargo)
+- Grammar structures (e.g., no solo... sino también)
+- Conversational phrases (e.g., qué tal, de nada)
+- Idiomatic expressions (e.g., estar en las nubes)
+
+WORD SELECTION CRITERIA:
 - Common verbs, nouns, adjectives that Spanish learners need
 - Words used in daily conversation and practical situations
 - Academic or professional vocabulary appropriate for the level
-- Phrases that are culturally significant or commonly used
 - Words that appear multiple times in the text (indicating importance)
 - Vocabulary that helps express ideas, emotions, or describe situations
 
 DIFFICULTY GUIDELINES:
-- Beginner: Essential everyday words, basic verbs, common adjectives
-- Intermediate: More complex verbs, descriptive language, abstract concepts
-- Advanced: Sophisticated vocabulary, technical terms (non-brand), nuanced expressions
+- Beginner: Essential everyday words and basic phrases
+- Intermediate: More complex vocabulary and common expressions
+- Advanced: Sophisticated vocabulary, complex phrases, and nuanced expressions
 
-For each selected word, provide:
+CATEGORIZATION:
+- Words: Use traditional categories (Culture/Media, Health/Body, etc.)
+- Phrases: Use Useful Phrases, Idioms / Expressions, Conversational Phrases, or Grammar Structures
+
+For each selected item, provide:
 1. The Spanish word/phrase (exactly as it appears, in lowercase unless it's a legitimate proper adjective)
 2. Clear, concise English translation
-3. Difficulty level (Beginner/Intermediate/Advanced)
-4. Most appropriate category
-5. Brief context about why it's educationally valuable
+3. Type: Word or Phrase
+4. Difficulty level (Beginner/Intermediate/Advanced)
+5. Most appropriate category
+6. Brief context about why it's educationally valuable
 
 TEXT TO ANALYZE:
-{text[:3000]}
+{text[:4000]}
 
 Respond in JSON format:
 {{
   "vocabulary": [
     {{
-      "spanish": "palabra",
-      "english": "word", 
+      "spanish": "tener en cuenta",
+      "english": "to take into account",
+      "type": "Phrase",
+      "difficulty": "{difficulty_level}",
+      "category": "Useful Phrases",
+      "context": "Common expression used in formal and informal contexts"
+    }},
+    {{
+      "spanish": "importante",
+      "english": "important",
+      "type": "Word", 
       "difficulty": "{difficulty_level}",
       "category": "General / Everyday",
-      "context": "Essential vocabulary for daily communication"
+      "context": "Essential adjective for expressing significance"
     }}
   ]
 }}
 """
+
+
+# --- File Processing Functions ---
+def extract_text_from_file(uploaded_file) -> str:
+    """Extract text from uploaded file based on file type"""
+    try:
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+        
+        if file_extension == 'txt':
+            # Handle text files
+            return str(uploaded_file.read(), "utf-8")
+            
+        elif file_extension == 'pdf':
+            # Handle PDF files
+            pdf_reader = PyPDF2.PdfReader(BytesIO(uploaded_file.read()))
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+            return text
+            
+        elif file_extension in ['docx', 'doc']:
+            # Handle Word documents
+            doc = docx.Document(BytesIO(uploaded_file.read()))
+            text = ""
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+            return text
+            
+        else:
+            st.error(f"Unsupported file type: {file_extension}")
+            return ""
+            
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
+        return ""
+
+
+def show_file_upload_interface():
+    """Show drag and drop file upload interface"""
+    st.subheader("📁 Upload Spanish Documents")
+    
+    # File uploader with drag and drop
+    uploaded_files = st.file_uploader(
+        "Drop files here or click to browse",
+        type=SUPPORTED_FILE_TYPES,
+        accept_multiple_files=True,
+        help=f"Supported formats: {', '.join(SUPPORTED_FILE_TYPES)}"
+    )
+    
+    if uploaded_files:
+        st.success(f"📎 {len(uploaded_files)} file(s) uploaded successfully!")
+        
+        # Show file details
+        for i, file in enumerate(uploaded_files):
+            with st.expander(f"📄 {file.name} ({file.size} bytes)"):
+                file_text = extract_text_from_file(file)
+                
+                if file_text:
+                    st.text_area(
+                        f"Content preview for {file.name}",
+                        value=file_text[:500] + ("..." if len(file_text) > 500 else ""),
+                        height=150,
+                        key=f"preview_{i}"
+                    )
+                    
+                    # Store extracted text in session state for processing
+                    if f"file_text_{i}" not in st.session_state:
+                        st.session_state[f"file_text_{i}"] = file_text
+                else:
+                    st.error(f"Could not extract text from {file.name}")
+        
+        return uploaded_files
+    
+    return None
 
 
 # --- Secrets Configuration ---
@@ -210,7 +319,7 @@ def get_secrets():
 # --- AI Vocabulary Analysis ---
 async def analyze_vocabulary_with_ai(text: str, provider_config: Dict, api_key: str = None,
                                      difficulty_level: str = "Intermediate") -> List[Dict]:
-    """Use AI to intelligently extract and analyze vocabulary"""
+    """Use AI to intelligently extract and analyze vocabulary including phrases"""
 
     prompt = get_enhanced_prompt(text, difficulty_level)
 
@@ -236,7 +345,7 @@ async def analyze_vocabulary_with_ai(text: str, provider_config: Dict, api_key: 
             payload = {
                 "model": provider_config["model"],
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 2000,
+                "max_tokens": 3000,
                 "temperature": 0.3
             }
 
@@ -267,13 +376,15 @@ async def analyze_vocabulary_with_ai(text: str, provider_config: Dict, api_key: 
                         # Convert to our format matching Notion DB and filter out proper nouns
                         result = []
                         for item in vocabulary:
-                            spanish_word = item.get("spanish", "").strip()
+                            spanish_item = item.get("spanish", "").strip()
+                            item_type = item.get("type", "Word")
                             
-                            # Skip if it's a proper noun
-                            if not is_likely_proper_noun(spanish_word):
+                            # For phrases, be less strict about proper noun filtering
+                            if item_type == "Phrase" or not is_likely_proper_noun(spanish_item):
                                 result.append({
-                                    "Spanish": spanish_word,
+                                    "Spanish": spanish_item,
                                     "English": item.get("english", ""),
+                                    "Type": item_type,
                                     "Difficulty Level": item.get("difficulty", difficulty_level),
                                     "Category": item.get("category", "General / Everyday"),
                                     "Reveal Answer": False,
@@ -362,6 +473,12 @@ def create_page(row: Dict, notion_token: str, database_id: str) -> bool:
         }
     }
 
+    # Handle Type (select property) - NEW
+    if "Type" in row and pd.notna(row["Type"]):
+        properties["properties"]["Type"] = {
+            "select": {"name": str(row["Type"])}
+        }
+
     # Handle Difficulty Level (select property)
     if "Difficulty Level" in row and pd.notna(row["Difficulty Level"]):
         properties["properties"]["Difficulty Level"] = {
@@ -413,7 +530,7 @@ def push_to_notion(selected_df: pd.DataFrame, notion_token: str, database_id: st
 
         if not duplicates.empty:
             st.warning(f"Found {len(duplicates)} duplicates that won't be added:")
-            st.dataframe(duplicates[["Spanish", "English"]], use_container_width=True)
+            st.dataframe(duplicates[["Spanish", "English", "Type"]], use_container_width=True)
 
         if new_words.empty:
             st.warning("No new words to add after duplicate check")
@@ -428,7 +545,7 @@ def push_to_notion(selected_df: pd.DataFrame, notion_token: str, database_id: st
                 progress_bar.progress((i + 1) / len(new_words))
                 time.sleep(0.3)  # Rate limiting
 
-            st.success(f"🎉 Successfully added {success_count} new words to Notion!")
+            st.success(f"🎉 Successfully added {success_count} new vocabulary items to Notion!")
             st.balloons()
             return True
 
@@ -438,7 +555,7 @@ def push_to_notion(selected_df: pd.DataFrame, notion_token: str, database_id: st
 
 
 def show_word_selection_interface():
-    """Show interface for selecting/deselecting vocabulary words"""
+    """Show interface for selecting/deselecting vocabulary words and phrases"""
     if 'vocabulary_df' not in st.session_state or st.session_state.vocabulary_df.empty:
         return
 
@@ -449,10 +566,10 @@ def show_word_selection_interface():
         df['Selected'] = True
         st.session_state.vocabulary_df = df
 
-    st.subheader("🎯 Select Words to Add")
+    st.subheader("🎯 Select Items to Add")
     
     # Quick action buttons
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         if st.button("✅ Select All"):
@@ -465,59 +582,98 @@ def show_word_selection_interface():
             st.rerun()
     
     with col3:
+        if st.button("📝 Words Only"):
+            st.session_state.vocabulary_df['Selected'] = False
+            word_indices = df[df['Type'] == 'Word'].index
+            st.session_state.vocabulary_df.loc[word_indices, 'Selected'] = True
+            st.rerun()
+    
+    with col4:
+        if st.button("💬 Phrases Only"):
+            st.session_state.vocabulary_df['Selected'] = False
+            phrase_indices = df[df['Type'] == 'Phrase'].index
+            st.session_state.vocabulary_df.loc[phrase_indices, 'Selected'] = True
+            st.rerun()
+    
+    with col5:
         if st.button("🎲 Random 10"):
             st.session_state.vocabulary_df['Selected'] = False
             random_indices = df.sample(n=min(10, len(df))).index
             st.session_state.vocabulary_df.loc[random_indices, 'Selected'] = True
             st.rerun()
-    
-    with col4:
-        if st.button("🧹 Remove Proper Nouns"):
-            # Apply proper noun filter
-            for idx, row in df.iterrows():
-                if is_likely_proper_noun(row['Spanish']):
-                    st.session_state.vocabulary_df.loc[idx, 'Selected'] = False
-            st.rerun()
 
     # Show selection stats
     selected_count = df['Selected'].sum()
     total_count = len(df)
-    st.info(f"📊 Selected: {selected_count} / {total_count} words")
-
-    # Individual word selection with improved display
-    st.write("**Select individual words:**")
+    words_count = len(df[df['Type'] == 'Word'])
+    phrases_count = len(df[df['Type'] == 'Phrase'])
+    selected_words = len(df[(df['Selected'] == True) & (df['Type'] == 'Word')])
+    selected_phrases = len(df[(df['Selected'] == True) & (df['Type'] == 'Phrase')])
     
-    # Create columns for better layout
-    for idx, row in df.iterrows():
-        col1, col2 = st.columns([1, 4])
-        
-        with col1:
-            current_selection = st.session_state.vocabulary_df.loc[idx, 'Selected']
-            new_selection = st.checkbox(
-                "Select",
-                value=current_selection,
-                key=f"select_{idx}",
-                label_visibility="collapsed"
-            )
-            
-            if new_selection != current_selection:
-                st.session_state.vocabulary_df.loc[idx, 'Selected'] = new_selection
-        
-        with col2:
-            # Color code based on selection
-            if st.session_state.vocabulary_df.loc[idx, 'Selected']:
-                st.markdown(f"**{row['Spanish']}** → *{row['English']}* | {row['Category']} | {row['Difficulty Level']}")
-            else:
-                st.markdown(f"~~{row['Spanish']} → {row['English']}~~ | {row['Category']} | {row['Difficulty Level']}")
+    st.info(f"📊 Selected: {selected_count} / {total_count} items ({selected_words} words, {selected_phrases} phrases)")
+
+    # Group by type for better organization
+    words_df = df[df['Type'] == 'Word']
+    phrases_df = df[df['Type'] == 'Phrase']
+
+    # Show words section
+    if not words_df.empty:
+        with st.expander(f"📝 Words ({len(words_df)})", expanded=True):
+            for idx, row in words_df.iterrows():
+                col1, col2 = st.columns([1, 4])
+                
+                with col1:
+                    current_selection = st.session_state.vocabulary_df.loc[idx, 'Selected']
+                    new_selection = st.checkbox(
+                        "Select",
+                        value=current_selection,
+                        key=f"select_word_{idx}",
+                        label_visibility="collapsed"
+                    )
+                    
+                    if new_selection != current_selection:
+                        st.session_state.vocabulary_df.loc[idx, 'Selected'] = new_selection
+                
+                with col2:
+                    # Color code based on selection
+                    if st.session_state.vocabulary_df.loc[idx, 'Selected']:
+                        st.markdown(f"**{row['Spanish']}** → *{row['English']}* | {row['Category']} | {row['Difficulty Level']}")
+                    else:
+                        st.markdown(f"~~{row['Spanish']} → {row['English']}~~ | {row['Category']} | {row['Difficulty Level']}")
+
+    # Show phrases section
+    if not phrases_df.empty:
+        with st.expander(f"💬 Phrases ({len(phrases_df)})", expanded=True):
+            for idx, row in phrases_df.iterrows():
+                col1, col2 = st.columns([1, 4])
+                
+                with col1:
+                    current_selection = st.session_state.vocabulary_df.loc[idx, 'Selected']
+                    new_selection = st.checkbox(
+                        "Select",
+                        value=current_selection,
+                        key=f"select_phrase_{idx}",
+                        label_visibility="collapsed"
+                    )
+                    
+                    if new_selection != current_selection:
+                        st.session_state.vocabulary_df.loc[idx, 'Selected'] = new_selection
+                
+                with col2:
+                    # Color code based on selection
+                    if st.session_state.vocabulary_df.loc[idx, 'Selected']:
+                        st.markdown(f"**{row['Spanish']}** → *{row['English']}* | {row['Category']} | {row['Difficulty Level']}")
+                    else:
+                        st.markdown(f"~~{row['Spanish']} → {row['English']}~~ | {row['Category']} | {row['Difficulty Level']}")
 
 
 def show_review_section():
-    """Enhanced review section with word selection"""
+    """Enhanced review section with word and phrase selection"""
     if 'vocabulary_df' not in st.session_state or st.session_state.vocabulary_df.empty:
         return
 
     st.divider()
-    st.header("📋 Review & Select Words")
+    st.header("📋 Review & Select Vocabulary")
 
     df = st.session_state.vocabulary_df
     
@@ -533,21 +689,23 @@ def show_review_section():
     selected_df = df[df['Selected'] == True].copy()
     
     if not selected_df.empty:
-        st.subheader("📄 Preview: Selected Words")
+        st.subheader("📄 Preview: Selected Items")
         
         # Show summary metrics
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Selected Words", len(selected_df))
+            st.metric("Total Selected", len(selected_df))
         with col2:
+            words_selected = len(selected_df[selected_df['Type'] == 'Word'])
+            st.metric("Words", words_selected)
+        with col3:
+            phrases_selected = len(selected_df[selected_df['Type'] == 'Phrase'])
+            st.metric("Phrases", phrases_selected)
+        with col4:
             if 'Difficulty Level' in selected_df.columns:
                 intermediate_count = len(selected_df[selected_df['Difficulty Level'] == 'Intermediate'])
                 st.metric("Intermediate", intermediate_count)
-        with col3:
-            if 'Category' in selected_df.columns:
-                most_common_cat = selected_df['Category'].mode().iloc[0] if not selected_df['Category'].empty else "N/A"
-                st.metric("Most Common Category", most_common_cat)
 
         # Show breakdown
         col1, col2 = st.columns(2)
@@ -557,26 +715,26 @@ def show_review_section():
                 difficulty_counts = selected_df['Difficulty Level'].value_counts()
                 st.write("**📊 Difficulty Breakdown:**")
                 for diff, count in difficulty_counts.items():
-                    st.write(f"- {diff}: {count} words")
+                    st.write(f"- {diff}: {count} items")
 
         with col2:
-            if 'Category' in selected_df.columns:
-                category_counts = selected_df['Category'].value_counts()
-                st.write("**🏷️ Category Breakdown:**")
-                for cat, count in category_counts.items():
-                    st.write(f"- {cat}: {count} words")
+            if 'Type' in selected_df.columns:
+                type_counts = selected_df['Type'].value_counts()
+                st.write("**🏷️ Type Breakdown:**")
+                for item_type, count in type_counts.items():
+                    st.write(f"- {item_type}: {count} items")
 
         # Show the selected data in a clean format
-        display_df = selected_df[['Spanish', 'English', 'Difficulty Level', 'Category']].copy()
+        display_df = selected_df[['Spanish', 'English', 'Type', 'Difficulty Level', 'Category']].copy()
         st.dataframe(display_df, use_container_width=True)
 
         # Push to Notion button
         secrets = get_secrets()
-        if st.button("🚀 Push Selected Words to Notion", type="primary"):
+        if st.button("🚀 Push Selected Items to Notion", type="primary"):
             if not secrets.get("NOTION_TOKEN") or not secrets.get("DATABASE_ID"):
                 st.warning("Please configure Notion connection in the sidebar")
             else:
-                with st.spinner("Pushing selected words to Notion..."):
+                with st.spinner("Pushing selected items to Notion..."):
                     success = push_to_notion(selected_df, secrets["NOTION_TOKEN"], secrets["DATABASE_ID"])
                     
                     if success:
@@ -586,7 +744,7 @@ def show_review_section():
                             st.session_state.vocabulary_df = pd.DataFrame(empty_data)
                             st.rerun()
     else:
-        st.warning("⚠️ No words selected. Please select at least one word to push to Notion.")
+        st.warning("⚠️ No items selected. Please select at least one word or phrase to push to Notion.")
 
 
 # --- Enhanced Web Scraping Functions ---
@@ -818,7 +976,7 @@ async def process_article(article_url: str, provider_config: Dict, api_key: str 
         if not article_text:
             st.error(
                 "❌ Could not fetch article text. The site might be blocking automated access or requires JavaScript.")
-            st.info("💡 Try copying and pasting the text manually in the 'Manual Entry' tab.")
+            st.info("💡 Try copying and pasting the text manually in the 'Manual Entry' tab or upload a file.")
             return
 
         if len(article_text) < 200:
@@ -835,26 +993,37 @@ async def process_article(article_url: str, provider_config: Dict, api_key: str 
                          height=300,
                          help=f"Total characters: {len(article_text)}")
 
-    with st.spinner("🤖 AI is analyzing vocabulary..."):
+    with st.spinner("🤖 AI is analyzing vocabulary and phrases..."):
         vocabulary = await analyze_vocabulary_with_ai(article_text, provider_config, api_key, difficulty_level)
 
         if vocabulary:
             st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
-            st.success(f"🎉 AI extracted {len(vocabulary)} useful vocabulary items at {difficulty_level} level!")
+            
+            words_count = len([v for v in vocabulary if v.get('Type') == 'Word'])
+            phrases_count = len([v for v in vocabulary if v.get('Type') == 'Phrase'])
+            
+            st.success(f"🎉 AI extracted {len(vocabulary)} items ({words_count} words, {phrases_count} phrases) at {difficulty_level} level!")
+
+            # Show type breakdown
+            if vocabulary:
+                type_counts = pd.Series([v.get('Type', 'Word') for v in vocabulary]).value_counts()
+                st.write("**📊 Type Breakdown:**")
+                for item_type, count in type_counts.items():
+                    st.write(f"- {item_type}: {count} items")
 
             # Show difficulty breakdown
             if vocabulary and 'Difficulty Level' in vocabulary[0]:
                 difficulty_counts = pd.Series([v['Difficulty Level'] for v in vocabulary]).value_counts()
                 st.write("**📊 Difficulty Breakdown:**")
                 for diff, count in difficulty_counts.items():
-                    st.write(f"- {diff}: {count} words")
+                    st.write(f"- {diff}: {count} items")
 
             # Show category breakdown
             if vocabulary and 'Category' in vocabulary[0]:
                 category_counts = pd.Series([v['Category'] for v in vocabulary]).value_counts()
                 st.write("**🏷️ Category Breakdown:**")
                 for cat, count in category_counts.items():
-                    st.write(f"- {cat}: {count} words")
+                    st.write(f"- {cat}: {count} items")
         else:
             st.warning(
                 "⚠️ AI could not extract vocabulary. Please try a different article or check your API configuration.")
@@ -865,12 +1034,16 @@ async def process_text_directly(text: str, provider_config: Dict, api_key: str =
                                 difficulty_level: str = "Intermediate"):
     """Process text directly without URL fetching"""
 
-    with st.spinner("🤖 AI is analyzing vocabulary..."):
+    with st.spinner("🤖 AI is analyzing vocabulary and phrases..."):
         vocabulary = await analyze_vocabulary_with_ai(text, provider_config, api_key, difficulty_level)
 
         if vocabulary:
             st.session_state.vocabulary_df = pd.DataFrame(vocabulary)
-            st.success(f"🎉 AI extracted {len(vocabulary)} useful vocabulary items at {difficulty_level} level!")
+            
+            words_count = len([v for v in vocabulary if v.get('Type') == 'Word'])
+            phrases_count = len([v for v in vocabulary if v.get('Type') == 'Phrase'])
+            
+            st.success(f"🎉 AI extracted {len(vocabulary)} items ({words_count} words, {phrases_count} phrases) at {difficulty_level} level!")
 
             # Show text preview
             with st.expander("📄 Text Preview"):
@@ -879,27 +1052,64 @@ async def process_text_directly(text: str, provider_config: Dict, api_key: str =
                              height=200,
                              help=f"Total characters: {len(text)}")
 
+            # Show type breakdown
+            if vocabulary:
+                type_counts = pd.Series([v.get('Type', 'Word') for v in vocabulary]).value_counts()
+                st.write("**📊 Type Breakdown:**")
+                for item_type, count in type_counts.items():
+                    st.write(f"- {item_type}: {count} items")
+
             # Show difficulty breakdown
             if vocabulary and 'Difficulty Level' in vocabulary[0]:
                 difficulty_counts = pd.Series([v['Difficulty Level'] for v in vocabulary]).value_counts()
                 st.write("**📊 Difficulty Breakdown:**")
                 for diff, count in difficulty_counts.items():
-                    st.write(f"- {diff}: {count} words")
+                    st.write(f"- {diff}: {count} items")
 
             # Show category breakdown
             if vocabulary and 'Category' in vocabulary[0]:
                 category_counts = pd.Series([v['Category'] for v in vocabulary]).value_counts()
                 st.write("**🏷️ Category Breakdown:**")
                 for cat, count in category_counts.items():
-                    st.write(f"- {cat}: {count} words")
+                    st.write(f"- {cat}: {count} items")
         else:
             st.warning("⚠️ AI could not extract vocabulary. Please try different text or check your API configuration.")
+
+
+async def process_uploaded_files(uploaded_files, provider_config: Dict, api_key: str = None,
+                                difficulty_level: str = "Intermediate"):
+    """Process multiple uploaded files and extract vocabulary"""
+    
+    all_text = ""
+    file_info = []
+    
+    for i, file in enumerate(uploaded_files):
+        file_text = extract_text_from_file(file)
+        if file_text:
+            all_text += f"\n\n--- {file.name} ---\n{file_text}"
+            file_info.append(f"✅ {file.name}: {len(file_text)} characters")
+        else:
+            file_info.append(f"❌ {file.name}: Failed to extract text")
+    
+    # Show file processing results
+    st.info("📁 File Processing Results:")
+    for info in file_info:
+        st.write(info)
+    
+    if not all_text.strip():
+        st.error("❌ No text could be extracted from any uploaded files.")
+        return
+    
+    st.info(f"📊 Total text extracted: {len(all_text)} characters from {len(uploaded_files)} files")
+    
+    # Process the combined text
+    await process_text_directly(all_text, provider_config, api_key, difficulty_level)
 
 
 # --- Streamlit App ---
 def main():
     st.title("🎓 AI-Powered Spanish Vocabulary Collector")
-    st.markdown("*Intelligently extract useful vocabulary from Spanish articles using AI*")
+    st.markdown("*Intelligently extract useful vocabulary and phrases from Spanish content using AI*")
 
     secrets = get_secrets()
 
@@ -984,10 +1194,26 @@ def main():
                 else:
                     st.warning("⚠️ API key needed")
 
-    # Main tabs
-    tab1, tab2, tab3 = st.tabs(["📰 From Article URL", "✏️ Manual Entry", "📝 From Text"])
+    # Main tabs - Updated with file upload tab
+    tab1, tab2, tab3, tab4 = st.tabs(["📁 Upload Files", "📰 From Article URL", "✏️ Manual Entry", "📝 From Text"])
 
     with tab1:
+        st.header("📁 Upload Spanish Documents")
+        st.info("💡 **New!** Drag and drop files or click to browse. Supports TXT, PDF, DOCX, and DOC files.")
+        
+        uploaded_files = show_file_upload_interface()
+        
+        if uploaded_files:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                if st.button("🤖 Extract from Files", type="primary"):
+                    if provider_config["requires_key"] and not ai_api_key:
+                        st.warning(f"Please configure {selected_provider} API key")
+                    else:
+                        difficulty_level = get_difficulty_from_slider(difficulty_slider)
+                        asyncio.run(process_uploaded_files(uploaded_files, provider_config, ai_api_key, difficulty_level))
+
+    with tab2:
         st.header("Extract Vocabulary from Spanish Article")
 
         st.info(
@@ -1008,7 +1234,7 @@ def main():
                     difficulty_level = get_difficulty_from_slider(difficulty_slider)
                     asyncio.run(process_article(article_url, provider_config, ai_api_key, difficulty_level))
 
-    with tab2:
+    with tab3:
         st.header("Manually Add Vocabulary")
 
         # Initialize DataFrame with proper columns and types if it doesn't exist
@@ -1016,6 +1242,7 @@ def main():
             st.session_state.vocabulary_df = pd.DataFrame({
                 "Spanish": pd.Series(dtype='str'),
                 "English": pd.Series(dtype='str'),
+                "Type": pd.Series(dtype='str'),
                 "Difficulty Level": pd.Series(dtype='str'),
                 "Category": pd.Series(dtype='str'),
                 "Reveal Answer": pd.Series(dtype='bool'),
@@ -1033,6 +1260,8 @@ def main():
                     df[col] = False
                 elif col == "Date Added":
                     df[col] = pd.to_datetime(datetime.today().date())
+                elif col == "Type":
+                    df[col] = "Word"
                 else:
                     df[col] = ""
 
@@ -1054,6 +1283,11 @@ def main():
                     "English",
                     required=True,
                     default=""
+                ),
+                "Type": st.column_config.SelectboxColumn(
+                    "Type",
+                    options=TYPE_OPTIONS,
+                    default="Word"
                 ),
                 "Difficulty Level": st.column_config.SelectboxColumn(
                     "Difficulty Level",
@@ -1094,7 +1328,7 @@ def main():
             st.session_state.vocabulary_df = edited_df
             st.success("Vocabulary list updated!")
 
-    with tab3:
+    with tab4:
         st.header("Extract Vocabulary from Text")
         st.info("💡 **Perfect for when URLs don't work!** Copy and paste Spanish text directly here.")
 
@@ -1114,7 +1348,7 @@ def main():
             if char_count < 100:
                 st.warning("⚠️ Text seems short. For best results, use at least 100 characters.")
             elif char_count > 5000:
-                st.info("ℹ️ Long text detected. AI will analyze the first 3000 characters.")
+                st.info("ℹ️ Long text detected. AI will analyze the first 4000 characters.")
 
         col1, col2 = st.columns([3, 1])
         with col1:
