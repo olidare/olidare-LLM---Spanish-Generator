@@ -224,32 +224,96 @@ def extract_text_from_file(uploaded_file) -> str:
     try:
         file_extension = uploaded_file.name.split('.')[-1].lower()
         
+        # Reset file pointer to beginning
+        uploaded_file.seek(0)
+        
         if file_extension == 'txt':
             # Handle text files
-            return str(uploaded_file.read(), "utf-8")
+            content = uploaded_file.read()
+            if isinstance(content, bytes):
+                return content.decode('utf-8')
+            return str(content)
             
         elif file_extension == 'pdf':
-            # Handle PDF files
-            pdf_reader = PyPDF2.PdfReader(BytesIO(uploaded_file.read()))
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text() + "\n"
-            return text
+            # Handle PDF files - improved error handling
+            try:
+                file_bytes = uploaded_file.read()
+                if len(file_bytes) == 0:
+                    st.error("PDF file appears to be empty")
+                    return ""
+                
+                pdf_reader = PyPDF2.PdfReader(BytesIO(file_bytes))
+                text = ""
+                
+                if len(pdf_reader.pages) == 0:
+                    st.error("PDF has no pages")
+                    return ""
+                
+                for page_num, page in enumerate(pdf_reader.pages):
+                    try:
+                        page_text = page.extract_text()
+                        if page_text.strip():  # Only add non-empty pages
+                            text += page_text + "\n"
+                    except Exception as page_error:
+                        st.warning(f"Could not read page {page_num + 1}: {str(page_error)}")
+                        continue
+                
+                if not text.strip():
+                    st.error("Could not extract any readable text from PDF")
+                    return ""
+                    
+                return text.strip()
+                
+            except Exception as pdf_error:
+                st.error(f"Error reading PDF: {str(pdf_error)}")
+                # Try alternative PDF processing if PyPDF2 fails
+                try:
+                    import pdfplumber
+                    uploaded_file.seek(0)
+                    with pdfplumber.open(BytesIO(uploaded_file.read())) as pdf:
+                        text = ""
+                        for page in pdf.pages:
+                            page_text = page.extract_text()
+                            if page_text:
+                                text += page_text + "\n"
+                        return text.strip()
+                except ImportError:
+                    st.error("Could not process PDF. Consider installing pdfplumber for better PDF support.")
+                    return ""
+                except Exception as plumber_error:
+                    st.error(f"Alternative PDF processing also failed: {str(plumber_error)}")
+                    return ""
             
         elif file_extension in ['docx', 'doc']:
             # Handle Word documents
-            doc = docx.Document(BytesIO(uploaded_file.read()))
-            text = ""
-            for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
-            return text
+            try:
+                file_bytes = uploaded_file.read()
+                if len(file_bytes) == 0:
+                    st.error("Word document appears to be empty")
+                    return ""
+                
+                doc = docx.Document(BytesIO(file_bytes))
+                text = ""
+                for paragraph in doc.paragraphs:
+                    if paragraph.text.strip():  # Only add non-empty paragraphs
+                        text += paragraph.text + "\n"
+                
+                if not text.strip():
+                    st.error("Could not extract any readable text from Word document")
+                    return ""
+                    
+                return text.strip()
+                
+            except Exception as docx_error:
+                st.error(f"Error reading Word document: {str(docx_error)}")
+                return ""
             
         else:
             st.error(f"Unsupported file type: {file_extension}")
             return ""
             
     except Exception as e:
-        st.error(f"Error processing file: {str(e)}")
+        st.error(f"Error processing file {uploaded_file.name}: {str(e)}")
         return ""
 
 
